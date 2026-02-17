@@ -1,0 +1,31 @@
+# Personal LLM - Git Ignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Models (too large for git)
+personal_llm_models/
+*.gguf
+
+# User Data (keep private)
+personal_llm/chat_history/
+personal_llm/knowledge_db/
+personal_llm/documents/
+personal_llm/exports/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+# Cleanup
+Legacy_Projects/
