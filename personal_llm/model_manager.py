@@ -7,8 +7,12 @@ import os
 import sys
 import json
 import logging
+import shutil
+import hashlib
+import requests
+import threading
 from pathlib import Path
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Callable
 
 from . import config
 
@@ -115,19 +119,118 @@ class ModelManager:
         print(f"   Size: ~{entry['size_gb']} GB")
         print(f"   This is a one-time download. After this, everything is offline.\n")
 
-        try:
-            downloaded_path = hf_hub_download(
-                repo_id=entry["repo_id"],
-                filename=entry["filename"],
-                local_dir=str(self.models_dir),
-                local_dir_use_symlinks=False,
-            )
-            print(f"\n✅ Downloaded to: {dest}")
-            return str(dest)
+    def download_model_stream(
+        self,
+        catalog_key: str,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+        cancel_event: Optional[threading.Event] = None
+    ) -> Optional[str]:
+        """
+        Robustly download a model with streaming progress, cancellation, and validation.
+        """
+        if catalog_key not in config.MODEL_CATALOG:
+            if progress_callback:
+                progress_callback(0, f"Error: Unknown model {catalog_key}")
+            return None
 
+        entry = config.MODEL_CATALOG[catalog_key]
+        dest_path = self.models_dir / entry["filename"]
+        temp_path = self.models_dir / (entry["filename"] + ".downloading")
+
+        if dest_path.exists():
+            if progress_callback:
+                progress_callback(1.0, f"Model already downloaded: {entry['filename']}")
+            return str(dest_path)
+
+        # 1. Pre-flight check: Disk Space
+        expected_bytes = entry.get("size_bytes")
+        if expected_bytes:
+            free_bytes = shutil.disk_usage(self.models_dir).free
+            # Require at least 200MB more than the file size as a safety buffer
+            if free_bytes < (expected_bytes + 200 * 1024 * 1024):
+                error_msg = f"Error: Not enough disk space. Need {expected_bytes/(1024**3):.2f} GB, but only {free_bytes/(1024**3):.2f} GB free."
+                logger.error(error_msg)
+                if progress_callback:
+                    progress_callback(0, error_msg)
+                return None
+
+        url = f"https://huggingface.co/{entry['repo_id']}/resolve/main/{entry['filename']}"
+        
+        try:
+            if progress_callback:
+                progress_callback(0, f"Connecting to HuggingFace...")
+
+            response = requests.get(url, stream=True, timeout=10)
+            response.raise_for_status()
+
+            total_size_str = response.headers.get('content-length')
+            total_size = int(total_size_str) if total_size_str else expected_bytes or 0
+            downloaded_size = 0
+
+            # 2. Download loop with cancellation check
+            with open(temp_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
+                    if cancel_event and cancel_event.is_set():
+                        logger.info("Download cancelled by user.")
+                        if progress_callback:
+                            progress_callback(downloaded_size / total_size if total_size else 0, "Download cancelled.")
+                        f.close()
+                        # Cleanup temp file on cancel
+                        if temp_path.exists():
+                            temp_path.unlink()
+                        return None
+                        
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+                        if total_size and progress_callback:
+                            percent = downloaded_size / total_size
+                            progress_callback(percent, f"Downloading {entry['name']}... ({downloaded_size/(1024**3):.2f} GB / {total_size/(1024**3):.2f} GB)")
+
+            # 3. Post-flight check: SHA256 Verification
+            expected_sha256 = entry.get("sha256")
+            if expected_sha256:
+                if progress_callback:
+                    progress_callback(1.0, "Verifying checksum...")
+                
+                sha256_hash = hashlib.sha256()
+                with open(temp_path, "rb") as f:
+                    for byte_block in iter(lambda: f.read(4096 * 1024), b""): # 4MB blocks for hashing
+                        sha256_hash.update(byte_block)
+                
+                actual_sha256 = sha256_hash.hexdigest()
+                
+                if actual_sha256 != expected_sha256:
+                    error_msg = "Error: Checksum mismatch. Download corrupted."
+                    logger.error(f"{error_msg} Expected {expected_sha256}, got {actual_sha256}")
+                    if progress_callback:
+                        progress_callback(1.0, error_msg)
+                    temp_path.unlink()
+                    return None
+
+            # All good! Rename to final destination
+            temp_path.rename(dest_path)
+            
+            if progress_callback:
+                progress_callback(1.0, f"Successfully downloaded {entry['name']}")
+                
+            return str(dest_path)
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Network Error: {str(e)}"
+            logger.error(error_msg)
+            if progress_callback:
+                progress_callback(0, error_msg)
+            if temp_path.exists():
+                temp_path.unlink()
+            return None
         except Exception as e:
-            logger.error(f"Download failed: {e}")
-            print(f"\n❌ Download failed: {e}")
+            error_msg = f"Unexpected Error: {str(e)}"
+            logger.error(error_msg)
+            if progress_callback:
+                progress_callback(0, error_msg)
+            if temp_path.exists():
+                temp_path.unlink()
             return None
 
     def download_model_interactive(self):

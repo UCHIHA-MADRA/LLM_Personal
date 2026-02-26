@@ -127,7 +127,8 @@ def main():
     # Step 5: Launch
     print("\n🚀 Launching Personal LLM...")
     from personal_llm.web_ui import launch_ui
-    launch_ui(share=args.share)
+    # Use port 7865 for CLI mode (config defaults to 0 for desktop auto-port)
+    launch_ui(share=args.share, port_override=7865)
 
 
 if __name__ == "__main__":

@@ -49,10 +49,48 @@ def main():
         print("   Then re-run this script.")
         return
 
+    def print_progress(percent: float, msg: str):
+        bar_len = 30
+        filled = int(bar_len * percent)
+        bar = '=' * filled + '-' * (bar_len - filled)
+        sys.stdout.write(f"\r[{bar}] {percent*100:.1f}% | {msg}")
+        sys.stdout.flush()
+
     # Interactive download
     while True:
-        result = manager.download_model_interactive()
-        if result is None:
+        print("\n" + "=" * 65)
+        print("📦  Available Models to Download")
+        print("=" * 65)
+
+        keys = list(config.MODEL_CATALOG.keys())
+        for i, key in enumerate(keys, 1):
+            entry = config.MODEL_CATALOG[key]
+            # Check if already downloaded
+            downloaded = (manager.models_dir / entry["filename"]).exists()
+            status = "✅ Downloaded" if downloaded else f"📥 ~{entry['size_gb']} GB"
+            print(f"\n  [{i}] {entry['name']}")
+            print(f"      {entry['description']}")
+            print(f"      Status: {status}")
+
+        print(f"\n  [0] Cancel")
+        print("=" * 65)
+        
+        try:
+            choice = input("\nSelect model to download (number): ").strip()
+            if choice == "0":
+                break
+                
+            idx = int(choice) - 1
+            if 0 <= idx < len(keys):
+                print()
+                result = manager.download_model_stream(keys[idx], progress_callback=print_progress)
+                print()
+                if not result:
+                    print("\n❌ Download failed or cancelled.")
+            else:
+                print("Invalid choice. Try again.")
+        except (ValueError, KeyboardInterrupt):
+            print("\nCancelled.")
             break
 
         print("\nWould you like to download another model?")

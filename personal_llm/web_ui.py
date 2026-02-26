@@ -6,6 +6,7 @@ Beautiful dark glassmorphism Gradio interface for chatting with your local LLM.
 import os
 import time
 import logging
+import threading
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -23,6 +24,7 @@ from .llm_engine import LLMEngine, get_engine
 from .model_manager import ModelManager
 from .chat_engine import ChatEngine, Conversation
 from .knowledge_base import KnowledgeBase
+from .llmfit_wrapper import get_model_fit_info
 
 
 # ─── Custom CSS for premium look ─────────────────────────────
@@ -123,6 +125,7 @@ class PersonalLLMUI:
         self.chat_engine = ChatEngine(self.engine)
         self.knowledge_base = None  # Lazy init
         self._current_conversation: Optional[Conversation] = None
+        self.download_cancel_event = threading.Event()
 
     def _get_kb(self) -> KnowledgeBase:
         if self.knowledge_base is None:
@@ -407,21 +410,42 @@ class PersonalLLMUI:
         """Refresh the model dropdown list."""
         return gr.update(choices=self._get_available_models())
 
+    def _download_model_ui(self, catalog_key: str, progress=gr.Progress()):
+        """Download a model with Gradio progress."""
+        if getattr(self, "download_cancel_event", None):
+            self.download_cancel_event.clear()
+        else:
+            self.download_cancel_event = threading.Event()
+        
+        def _progress_cb(percent, msg):
+            progress(percent, desc=msg)
+            
+        result = self.model_manager.download_model_stream(
+            catalog_key, 
+            progress_callback=_progress_cb,
+            cancel_event=self.download_cancel_event
+        )
+        
+        choices = self._get_available_models()
+        if result:
+            entry = config.MODEL_CATALOG[catalog_key]
+            status = self._load_model(entry["filename"])
+            return status, gr.update(choices=choices, value=entry["filename"]), "✅ Download complete! Model is ready."
+        else:
+            return self._get_status_text(), gr.update(choices=choices), "❌ Download failed or cancelled."
+
+    def _cancel_download(self):
+        """Cancel an active download."""
+        if hasattr(self, 'download_cancel_event'):
+            self.download_cancel_event.set()
+        return "⚠️ Cancelling download..."
+
     def build(self) -> gr.Blocks:
         """Build the Gradio UI."""
         if not GRADIO_AVAILABLE:
             raise ImportError("Gradio not installed. Install: pip install gradio")
 
-        with gr.Blocks(
-            title="Personal LLM — Your Private AI",
-            theme=gr.themes.Soft(
-                primary_hue="indigo",
-                secondary_hue="purple",
-                neutral_hue="slate",
-                font=["Inter", "ui-sans-serif", "system-ui"],
-            ),
-            css=CUSTOM_CSS,
-        ) as app:
+        with gr.Blocks(title="Personal LLM — Your Private AI") as app:
 
             # ─── Header ───────────────────────────────
             gr.Markdown("# 🧠 Personal LLM", elem_id="title-text")
@@ -438,134 +462,164 @@ class PersonalLLMUI:
                 elem_id="status-bar",
             )
 
-            with gr.Row():
-                # ─── Main Chat Area ───────────────────
-                with gr.Column(scale=3):
-                    chatbot = gr.Chatbot(
-                        label="Chat",
-                        height=520,
-                        type="messages",
-                        show_copy_button=True,
-                        avatar_images=(None, None),
-                        placeholder="Load a model and start chatting...",
-                    )
-
-                    with gr.Row(elem_classes="input-area"):
-                        msg_input = gr.Textbox(
-                            placeholder="Type your message... (Enter to send, Shift+Enter for newline)",
-                            label="",
-                            scale=5,
-                            lines=2,
-                            max_lines=6,
-                        )
-                        send_btn = gr.Button(
-                            "Send ▶",
-                            variant="primary",
-                            scale=1,
-                            elem_classes="primary-btn",
-                        )
-
+            with gr.Tabs():
+                with gr.Tab("💬 Chat"):
                     with gr.Row():
-                        new_chat_btn = gr.Button("🗨️ New Chat", size="sm")
-                        export_btn = gr.Button("📤 Export Chat", size="sm")
-
-                # ─── Sidebar ──────────────────────────
-                with gr.Column(scale=1):
-                    # Model Selection
-                    with gr.Group():
-                        gr.Markdown("### 🤖 Model")
-                        model_dropdown = gr.Dropdown(
-                            choices=self._get_available_models(),
-                            label="Select Model",
-                            elem_classes="model-dropdown",
-                        )
-                        with gr.Row():
-                            load_btn = gr.Button(
-                                "Load Model",
-                                variant="primary",
-                                elem_classes="primary-btn",
-                                scale=3,
+                        # ─── Main Chat Area ───────────────────
+                        with gr.Column(scale=3):
+                            chatbot = gr.Chatbot(
+                                label="Chat",
+                                height=520,
+                                placeholder="Load a model and start chatting...",
                             )
-                            refresh_models_btn = gr.Button("🔄", size="sm", scale=1)
+        
+                            with gr.Row(elem_classes="input-area"):
+                                msg_input = gr.Textbox(
+                                    placeholder="Type your message... (Enter to send, Shift+Enter for newline)",
+                                    label="",
+                                    scale=5,
+                                    lines=2,
+                                    max_lines=6,
+                                )
+                                send_btn = gr.Button(
+                                    "Send ▶",
+                                    variant="primary",
+                                    scale=1,
+                                    elem_classes="primary-btn",
+                                )
+        
+                            with gr.Row():
+                                new_chat_btn = gr.Button("🗨️ New Chat", size="sm")
+                                export_btn = gr.Button("📤 Export Chat", size="sm")
+        
+                        # ─── Sidebar ──────────────────────────
+                        with gr.Column(scale=1):
+                            # Model Selection
+                            with gr.Group():
+                                gr.Markdown("### 🤖 Model")
+                                model_dropdown = gr.Dropdown(
+                                    choices=self._get_available_models(),
+                                    label="Select Model",
+                                    elem_classes="model-dropdown",
+                                )
+                                with gr.Row():
+                                    load_btn = gr.Button(
+                                        "Load Model",
+                                        variant="primary",
+                                        elem_classes="primary-btn",
+                                        scale=3,
+                                    )
+                                    refresh_models_btn = gr.Button("🔄", size="sm", scale=1)
+        
+                            # Conversation History
+                            with gr.Accordion("💬 Chat History", open=False):
+                                history_dropdown = gr.Dropdown(
+                                    choices=self._get_conversation_list(),
+                                    label="Past Conversations",
+                                    interactive=True,
+                                )
+                                with gr.Row():
+                                    load_conv_btn = gr.Button("📂 Load", size="sm", scale=2)
+                                    delete_conv_btn = gr.Button("🗑️ Delete", size="sm", scale=1)
+                                    refresh_conv_btn = gr.Button("🔄", size="sm", scale=1)
+                                history_status = gr.Textbox(
+                                    label="", interactive=False, lines=1, visible=True,
+                                )
+        
+                            # Conversation Search
+                            with gr.Accordion("🔍 Search History", open=False):
+                                search_input = gr.Textbox(
+                                    placeholder="Search across all chats...",
+                                    label="",
+                                    lines=1,
+                                )
+                                search_btn = gr.Button("Search", size="sm")
+                                search_results = gr.Textbox(
+                                    label="Results", interactive=False, lines=6,
+                                )
+        
+                            # System Prompt
+                            with gr.Accordion("📝 System Prompt", open=False):
+                                system_prompt = gr.Textbox(
+                                    value="You are a helpful, knowledgeable AI assistant. Answer questions clearly and thoroughly.",
+                                    label="",
+                                    lines=4,
+                                    placeholder="Define the AI's personality...",
+                                )
+        
+                            # Generation Settings
+                            with gr.Accordion("⚙️ Settings", open=False):
+                                temperature = gr.Slider(
+                                    minimum=0.0, maximum=2.0, value=0.7,
+                                    step=0.1, label="Temperature",
+                                )
+                                max_tokens = gr.Slider(
+                                    minimum=64, maximum=4096, value=2048,
+                                    step=64, label="Max Tokens",
+                                )
+        
+                            # RAG / Knowledge Base
+                            with gr.Accordion("📄 Knowledge Base (RAG)", open=False):
+                                use_rag = gr.Checkbox(
+                                    label="Use document context", value=False
+                                )
+                                file_upload = gr.File(
+                                    label="Upload Document",
+                                    file_types=[".txt", ".md", ".pdf", ".py", ".json", ".csv"],
+                                )
+                                upload_status = gr.Textbox(
+                                    label="Status", interactive=False, lines=2
+                                )
+                                with gr.Row():
+                                    kb_stats_btn = gr.Button("📊 Stats", size="sm")
+                                    clear_kb_btn = gr.Button("🗑️ Clear All", size="sm")
+        
+                                # Per-document deletion
+                                gr.Markdown("**Remove a Document:**")
+                                source_dropdown = gr.Dropdown(
+                                    choices=self._get_kb_sources(),
+                                    label="Select Document",
+                                    interactive=True,
+                                )
+                                with gr.Row():
+                                    delete_source_btn = gr.Button("🗑️ Remove Doc", size="sm")
+                                    refresh_sources_btn = gr.Button("🔄", size="sm")
+        
+                            # Export info
+                            export_output = gr.Textbox(
+                                label="Export Path", interactive=False, visible=False
+                            )
 
-                    # Conversation History
-                    with gr.Accordion("💬 Chat History", open=False):
-                        history_dropdown = gr.Dropdown(
-                            choices=self._get_conversation_list(),
-                            label="Past Conversations",
-                            interactive=True,
-                        )
-                        with gr.Row():
-                            load_conv_btn = gr.Button("📂 Load", size="sm", scale=2)
-                            delete_conv_btn = gr.Button("🗑️ Delete", size="sm", scale=1)
-                            refresh_conv_btn = gr.Button("🔄", size="sm", scale=1)
-                        history_status = gr.Textbox(
-                            label="", interactive=False, lines=1, visible=True,
-                        )
-
-                    # Conversation Search
-                    with gr.Accordion("🔍 Search History", open=False):
-                        search_input = gr.Textbox(
-                            placeholder="Search across all chats...",
-                            label="",
-                            lines=1,
-                        )
-                        search_btn = gr.Button("Search", size="sm")
-                        search_results = gr.Textbox(
-                            label="Results", interactive=False, lines=6,
-                        )
-
-                    # System Prompt
-                    with gr.Accordion("📝 System Prompt", open=False):
-                        system_prompt = gr.Textbox(
-                            value="You are a helpful, knowledgeable AI assistant. Answer questions clearly and thoroughly.",
-                            label="",
-                            lines=4,
-                            placeholder="Define the AI's personality...",
-                        )
-
-                    # Generation Settings
-                    with gr.Accordion("⚙️ Settings", open=False):
-                        temperature = gr.Slider(
-                            minimum=0.0, maximum=2.0, value=0.7,
-                            step=0.1, label="Temperature",
-                        )
-                        max_tokens = gr.Slider(
-                            minimum=64, maximum=4096, value=2048,
-                            step=64, label="Max Tokens",
-                        )
-
-                    # RAG / Knowledge Base
-                    with gr.Accordion("📄 Knowledge Base (RAG)", open=False):
-                        use_rag = gr.Checkbox(
-                            label="Use document context", value=False
-                        )
-                        file_upload = gr.File(
-                            label="Upload Document",
-                            file_types=[".txt", ".md", ".pdf", ".py", ".json", ".csv"],
-                        )
-                        upload_status = gr.Textbox(
-                            label="Status", interactive=False, lines=2
-                        )
-                        with gr.Row():
-                            kb_stats_btn = gr.Button("📊 Stats", size="sm")
-                            clear_kb_btn = gr.Button("🗑️ Clear All", size="sm")
-
-                        # Per-document deletion
-                        gr.Markdown("**Remove a Document:**")
-                        source_dropdown = gr.Dropdown(
-                            choices=self._get_kb_sources(),
-                            label="Select Document",
-                            interactive=True,
-                        )
-                        with gr.Row():
-                            delete_source_btn = gr.Button("🗑️ Remove Doc", size="sm")
-                            refresh_sources_btn = gr.Button("🔄", size="sm")
-
-                    # Export info
-                    export_output = gr.Textbox(
-                        label="Export Path", interactive=False, visible=False
-                    )
+                with gr.Tab("📦 Model Manager"):
+                    gr.Markdown("### Download AI Models\nSelect a model below to magically download to your device and chat offline.")
+                    download_buttons = {}
+                    
+                    for key, entry in config.MODEL_CATALOG.items():
+                        
+                        # Hardware check (llmfit)
+                        fit_info = get_model_fit_info(entry.get("hf_id", ""))
+                        
+                        fit_badge = ""
+                        speed_estimate = ""
+                        if fit_info:
+                            level = fit_info["fit_level"]
+                            color = "🟢" if level == "Perfect" else "🟡" if level == "Good" or level == "Marginal" else "🔴"
+                            fit_badge = f"{color} **Fit:** {level} (Requires {fit_info['memory_required_gb']} GB RAM/VRAM)"
+                            if fit_info["estimated_tps"] > 0:
+                                speed_estimate = f" | ⚡ **Est. Speed:** ~{int(fit_info['estimated_tps'])} tok/s"
+                        
+                        with gr.Group():
+                            with gr.Row():
+                                with gr.Column(scale=4):
+                                    gr.Markdown(f"### {entry['name']}\n**Size**: ~{entry['size_gb']} GB\n\n_{entry['description']}_\n\n{fit_badge}{speed_estimate}")
+                                with gr.Column(scale=1):
+                                    btn = gr.Button("Download ⬇️", variant="primary")
+                                    download_buttons[key] = btn
+                    
+                    with gr.Group():
+                        gr.Markdown("### Download Progress")
+                        download_status = gr.Textbox(label="Status", interactive=False, lines=1)
+                        cancel_dl_btn = gr.Button("Stop Download", variant="stop")
 
             # ─── Event Handlers ───────────────────────
 
@@ -580,6 +634,23 @@ class PersonalLLMUI:
             refresh_models_btn.click(
                 fn=self._refresh_models,
                 outputs=[model_dropdown],
+            )
+            
+            # Model Manager Download Hookups
+            def make_dl_handler(k):
+                def handler(progress=gr.Progress()):
+                    return self._download_model_ui(k, progress=progress)
+                return handler
+
+            for key, btn in download_buttons.items():
+                btn.click(
+                    fn=make_dl_handler(key),
+                    outputs=[status_bar, model_dropdown, download_status]
+                )
+
+            cancel_dl_btn.click(
+                fn=self._cancel_download,
+                outputs=[download_status]
             )
 
             # Send message (button)
@@ -676,8 +747,16 @@ class PersonalLLMUI:
         return app
 
 
-def launch_ui(share: bool = False):
-    """Launch the Personal LLM web interface."""
+
+def launch_ui(share: bool = False, prevent_thread_lock: bool = False, inbrowser: bool = True, port_override: int = None):
+    """Launch the Personal LLM web interface.
+    
+    Args:
+        share: Create a public Gradio share link.
+        prevent_thread_lock: If True, don't block the main thread (for desktop app).
+        inbrowser: If True, auto-open browser tab.
+        port_override: If set, use this port instead of config.UI_PORT.
+    """
     ui = PersonalLLMUI()
 
     # Auto-load default model if available
@@ -693,13 +772,23 @@ def launch_ui(share: bool = False):
         ui._current_conversation = ui.chat_engine.new_conversation()
 
     app = ui.build()
-    print(f"\n🚀 Launching Personal LLM at http://{config.UI_HOST}:{config.UI_PORT}")
+    
+    port = port_override if port_override is not None else config.UI_PORT
+    print(f"\n🚀 Launching Personal LLM at http://{config.UI_HOST}:{port}")
     print("   Press Ctrl+C to stop\n")
-    app.launch(
+    return app.launch(
         server_name=config.UI_HOST,
-        server_port=config.UI_PORT,
+        server_port=port,
         share=share,
-        inbrowser=True,
+        inbrowser=inbrowser,
+        prevent_thread_lock=prevent_thread_lock,
+        theme=gr.themes.Soft(
+            primary_hue="indigo",
+            secondary_hue="purple",
+            neutral_hue="slate",
+            font=["Inter", "ui-sans-serif", "system-ui"],
+        ),
+        css=CUSTOM_CSS,
     )
 
 

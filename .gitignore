@@ -27,5 +27,17 @@ personal_llm/exports/
 # OS
 .DS_Store
 Thumbs.db
+
 # Cleanup
 Legacy_Projects/
+
+# Build Artifacts
+ui/dist-electron/
+ui/release/
+ui/dist/
+ui/out/
+dist/
+installer_output/
+*.exe
+website/.next/
+mobile/.expo/

@@ -2,88 +2,214 @@
 
 > **100% Offline. 100% Private. Zero Monthly Fees.**
 
-This project lets you run a powerful AI assistant (like ChatGPT) entirely on your own computer. Your chats, documents, and data never leave your machine.
+Run a powerful AI assistant (like ChatGPT) entirely on your own computer. Your chats, documents, and data never leave your machine. Available as both a **desktop app** and a **web UI**.
 
 ---
 
-## 🚀 Getting Started (For Beginners)
+## 🚀 Quick Start
 
-Follow these steps to get up and running in 5 minutes.
+### Prerequisites
 
-### 1. Requirements
-- **Windows PC** (works best with NVIDIA GPU, but runs on CPU too)
-- **Python 3.10 or higher** ([Download Here](https://www.python.org/downloads/))
-- **Git** ([Download Here](https://git-scm.com/downloads))
+| Requirement | Details |
+|---|---|
+| **OS** | Windows 10/11 (64-bit) |
+| **Python** | 3.10 or higher — [Download](https://www.python.org/downloads/) |
+| **Git** | [Download](https://git-scm.com/downloads) |
+| **RAM** | 8 GB minimum (16 GB recommended for 7B models) |
+| **GPU** | Optional — NVIDIA GPU with CUDA speeds things up dramatically |
 
-### 2. Install
-Open `PowerShell` or `Command Prompt` and run:
+### 1. Clone & Install
 
 ```powershell
-# 1. Clone this repository
 git clone https://github.com/YOUR_USERNAME/personal-llm.git
 cd personal-llm
 
-# 2. Install required libraries
+# Install all dependencies
 pip install -r personal_llm/requirements.txt
+
+# Install desktop app dependencies
+pip install pywebview
 ```
 
-> **Note:** If you have an NVIDIA GPU, run this extra command for speed:
+> **NVIDIA GPU Users** — Install the CUDA-accelerated LLM engine for 10–50x faster inference:
 > ```powershell
 > pip install llama-cpp-python --force-reinstall --no-cache-dir --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
 > ```
+>
+> **CPU-Only Users** — Install the standard engine (slower but works on any PC):
+> ```powershell
+> pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+> ```
 
-### 3. Setup Models
-You need to download the AI "brain" files (models). We've made this easy:
+### 2. Download a Model
+
+You need at least one AI model file (`.gguf` format). Run the interactive downloader:
 
 ```powershell
 python personal_llm/setup_models.py
 ```
-*Follow the on-screen prompts to download a model (e.g., Phi-3 Mini or Mistral 7B).*
 
-### 4. Launch!
-Start your AI assistant:
+This downloads the model once — after that, everything runs offline.
+
+### 3. Launch
+
+You have **two ways** to run Personal LLM:
+
+#### 🖥️ Option A: Desktop App (Recommended)
+
+Opens in a native window — no browser needed, feels like a real application.
+
+```powershell
+python desktop_app.py
+```
+
+#### 🌐 Option B: Web UI
+
+Opens in your browser at `http://127.0.0.1:7865`.
 
 ```powershell
 python launch_personal_llm.py
 ```
-*Click the local URL (e.g., `http://127.0.0.1:7865`) to open the Web UI in your browser.*
 
 ---
 
 ## 💡 How to Use
 
 ### 💬 Chat
-- Select a model from the sidebar.
+- Select a model from the sidebar and click **Load Model**.
 - Type your message and press **Enter**.
 - The AI remembers your conversation context.
 
 ### 📄 Knowledge Base (RAG)
-- Expand the **"Knowledge Base (RAG)"** section in the sidebar.
+- Expand **"Knowledge Base (RAG)"** in the sidebar.
 - Upload a PDF, text file, or code file.
 - Check **"Use document context"**.
 - Ask questions about your document!
 
 ### ⚙️ Management
-- **Chat History**: Load or delete past conversations from the sidebar.
-- **Search**: Find past chats using the "Search History" tool.
-- **Manage Docs**: Delete individual uploaded documents from the Knowledge Base section.
+- **Chat History** — Load or delete past conversations.
+- **Search** — Find past chats using the search tool.
+- **Manage Docs** — Delete individual uploaded documents from the Knowledge Base.
+
+---
+
+## 📦 Build a Standalone Desktop App (.exe)
+
+Turn Personal LLM into a distributable Windows application that anyone can run — no Python installation required.
+
+### Step 1: Set Up the Build Environment
+
+```powershell
+# Install build tools
+pip install pyinstaller pywebview
+
+# For CPU-only build (smaller, works everywhere):
+pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+
+# For GPU-accelerated build (requires NVIDIA GPU on target PC):
+pip install llama-cpp-python --force-reinstall --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+```
+
+### Step 2: Build the Executable
+
+```powershell
+pyinstaller personal_llm.spec --clean --noconfirm
+```
+
+This takes 5–10 minutes. The output will be in `dist/PersonalLLM/`.
+
+### Step 3: Add Your Models
+
+```powershell
+# Create the models folder and copy your models into it
+mkdir dist\PersonalLLM\personal_llm_models
+copy personal_llm_models\*.gguf dist\PersonalLLM\personal_llm_models\
+```
+
+### Step 4: Test It
+
+```powershell
+.\dist\PersonalLLM\PersonalLLM.exe
+```
+
+You should see a splash screen, then the full AI interface loads in a native window.
+
+### What You Get
+
+```
+dist/PersonalLLM/
+├── PersonalLLM.exe              ← Double-click to launch
+├── personal_llm_models/         ← Place .gguf model files here
+├── personal_llm_data/           ← Auto-created: chat history, RAG database
+│   ├── chat_history/
+│   ├── knowledge_db/
+│   └── documents/
+└── _internal/                   ← Supporting libraries (do not modify)
+```
+
+### Distribution Checklist
+
+When sharing the app with others, include:
+
+| Item | Required? | Notes |
+|---|---|---|
+| `PersonalLLM.exe` | ✅ Yes | The main application |
+| `_internal/` folder | ✅ Yes | All bundled dependencies |
+| `personal_llm_models/` folder | ✅ Yes | Must contain at least one `.gguf` model |
+| `personal_llm_data/` folder | ❌ No | Auto-created on first run |
+
+> [!IMPORTANT]
+> **Model files are large** (2–5 GB each). You'll likely want to distribute models separately
+> via a download link rather than bundling them with the app.
+
+### Known Build Notes
+
+- **Windows SmartScreen**: The `.exe` is unsigned, so Windows will show a "Windows protected your PC" warning on first launch. Click **"More info" → "Run anyway"**. To avoid this, you would need a code signing certificate (~$200–400/year).
+- **Antivirus**: Some antivirus software may flag PyInstaller executables. This is a known false positive.
+- **Build Size**: The `dist/PersonalLLM/` folder is ~1 GB (excluding models). Most of this is PyTorch (used for document embeddings).
 
 ---
 
 ## ❓ Troubleshooting
 
+**Q: The desktop app shows "No Models Found"**
+A: Place `.gguf` model files in `personal_llm_models/` next to the `.exe` (or next to `desktop_app.py` in dev mode).
+
 **Q: It's slow!**
-A: If you don't have a GPU, switch to a smaller model like **Phi-3 Mini**. It's designed for CPUs.
+A: If you don't have a GPU, use a smaller model like **Phi-3 Mini** (2.4 GB). It's designed for CPUs.
 
 **Q: "No module named..." error?**
-A: Run `pip install -r personal_llm/requirements.txt` again.
+A: Run `pip install -r personal_llm/requirements.txt` and `pip install pywebview`.
+
+**Q: The port is already in use**
+A: The desktop app auto-finds a free port. The web UI uses port 7865 by default — if that's taken, set a custom one: `set PERSONAL_LLM_PORT=8080` before launching.
 
 **Q: Where is my data?**
-A: Everything is stored locally in the `personal_llm/` folder:
-- Chats: `personal_llm/chat_history/`
-- RAG Database: `personal_llm/knowledge_db/`
+A: Everything is stored locally:
+- **Dev mode**: Inside the `personal_llm/` folder
+- **Desktop app (.exe)**: In `personal_llm_data/` next to the `.exe`
 
 ---
 
+## 🏗️ Project Structure
+
+```
+LLM_Personal/
+├── desktop_app.py              ← Desktop app launcher (pywebview)
+├── launch_personal_llm.py      ← Web UI launcher (browser)
+├── personal_llm.spec           ← PyInstaller build config
+├── personal_llm/
+│   ├── config.py               ← All settings & paths
+│   ├── web_ui.py               ← Gradio interface
+│   ├── llm_engine.py           ← LLM inference engine
+│   ├── chat_engine.py          ← Conversation management
+│   ├── model_manager.py        ← Model download & selection
+│   ├── knowledge_base.py       ← RAG / document search
+│   ├── hardware.py             ← GPU/CPU detection
+│   └── requirements.txt        ← Python dependencies
+└── personal_llm_models/        ← Your downloaded .gguf models
+```
+
 ## 📚 Advanced Documentation
+
 For technical details, architecture diagrams, and API info, read the [Project Report](PROJECT_REPORT.md).
