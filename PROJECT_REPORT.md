@@ -1,7 +1,7 @@
 # 🧠 Personal LLM 2.0 — Complete Project Report
 
 > **Version:** 2.0.0
-> **Date:** February 26, 2026
+> **Date:** February 27, 2026
 > **Author:** Built for Prabh's personal use
 > **Location:** `c:\Users\prabh\Desktop\LLM_Personal\`
 
@@ -43,9 +43,9 @@ A **fully offline, private AI assistant** that runs entirely on your personal PC
 - **🧠 Reasoning** — Step-by-step logical thinking (DeepSeek-R1)
 - **💻 Code Generation** — Write, debug, explain code (CodeLlama, Qwen)
 - **📄 Document Q&A (RAG)** — Upload PDFs/text files, ask questions about them
-- **🌐 Cloud Proxy** — Connect API keys (OpenAI, Groq, Together) to mix local and cloud AI
+- **🌐 Cloud Proxy** — Connect API keys (OpenAI, Groq, Together) to mix local and cloud AI (see [Section 3.4: api.py](#34-apipy) for details)
 - **🔄 Multi-Model** — Switch between 27+ different AI models on-the-fly
-- **📱 Mobile App** — Connect locally from your phone with the React Native Expo app
+- **📱 Mobile App** — Connect locally from your phone with the React Native Expo app (see [Section 3.12: Mobile App](#312-mobile-app-mobile))
 - **💾 Persistent History** — All conversations saved locally as JSON
 
 ---
@@ -59,15 +59,18 @@ A **fully offline, private AI assistant** that runs entirely on your personal PC
 │                    YOUR PERSONAL PC                           │
 │                                                               │
 │  ┌──────────────────────┐   ┌─────────────────────────────┐   │
-│  │     Web Browser      │   │    Mobile App (Expo)        │   │
-│  │ http://127.0.0.1:3000│   │ http://10.0.2.2:8000 (LAN)  │   │
+│  │   Electron Desktop   │   │    Mobile App (Expo)        │   │
+│  │ http://127.0.0.1:PORT│   │ http://<LAN_IP>:8000        │   │
 │  └──────────┬───────────┘   └─────────────┬───────────────┘   │
 │             │                             │                   │
 │  ┌──────────▼─────────────────────────────▼───────────────┐   │
-│  │          FastAPI Backend (api.py)                      │   │
+│  │          FastAPI Backend (api.py) — port 8000          │   │
 │  │  • REST API for models, status, chat, docs             │   │
-│  │  • Cloud inference fallback (OpenAI/Groq/Together)     │   │
+│  │  • Cloud inference proxy (OpenAI/Groq/Together)        │   │
 │  │  • Background model downloading                        │   │
+│  ├────────────────────────────────────────────────────────┤   │
+│  │          Gradio Web UI (web_ui.py) — port 7865         │   │
+│  │  • Legacy standalone browser UI (localhost only)       │   │
 │  └──────┬───────────┬──────────────┬──────────────────────┘   │
 │         │           │              │                          │
 │  ┌──────▼─────┐ ┌───▼──────┐ ┌────▼───────────────────┐       │
@@ -75,8 +78,7 @@ A **fully offline, private AI assistant** that runs entirely on your personal PC
 │  │  .py       │ │  .py     │ │  (RAG System)          │       │
 │  │            │ │          │ │                        │       │
 │  │ • Sessions │ │ • List   │ │ • Ingest documents     │       │
-│  │ • History  │ │ • D-load │ │ • Chunk & Embed        │       │
-│  │ • DB/JSON  │ │ • Config │ │ • ChromaDB Retrieval   │       │
+│  │ • History  │ │ • D-load │ │ • Config │ │ • ChromaDB Retrieval   │       │
 │  └──────┬─────┘ └──────────┘ └────────────────────────┘       │
 │         │                                                     │
 │  ┌──────▼──────────────────────────────────────────────┐      │
@@ -91,6 +93,11 @@ A **fully offline, private AI assistant** that runs entirely on your personal PC
 │  └─────────────────────────────────────────────────────┘      │
 └───────────────────────────────────────────────────────────────┘
 ```
+
+> **Note on ports:** The system uses multiple ports depending on the interface:
+> - **Port 8000** — FastAPI backend (serves both the Electron desktop app and mobile app)
+> - **Port 7865** — Gradio standalone web UI (legacy launcher, localhost only)
+> - The Electron app dynamically finds an available port for its window, then connects to the FastAPI backend.
 
 ### How llama-cpp-python Works
 
@@ -114,7 +121,7 @@ There is **no server process**, no HTTP calls, no Docker container. Your Python 
 **What it contains:**
 
 - Module docstring describing the project
-- `__version__ = "1.0.0"` — version identifier
+- `__version__ = "2.0.0"` — version identifier
 
 **Key detail:** This file is intentionally minimal. It does NOT auto-import heavy modules like `llama_cpp` or `chromadb` to keep import times fast.
 
@@ -129,12 +136,12 @@ There is **no server process**, no HTTP calls, no Docker container. Your Python 
 #### Directories (Lines 9-27)
 
 ```
-BASE_DIR            → LLM_Enhanced/                    (project root)
-PERSONAL_LLM_DIR    → LLM_Enhanced/personal_llm/       (package directory)
-MODELS_DIR          → LLM_Enhanced/personal_llm_models/ (GGUF files stored here)
-CHAT_HISTORY_DIR    → personal_llm/chat_history/        (JSON conversation files)
-KNOWLEDGE_DB_DIR    → personal_llm/knowledge_db/        (ChromaDB vector database)
-DOCUMENTS_DIR       → personal_llm/documents/           (uploaded documents)
+BASE_DIR            → LLM_Personal/                              (project root)
+PERSONAL_LLM_DIR    → LLM_Personal/personal_llm/                 (package directory)
+MODELS_DIR          → LLM_Personal/personal_llm_models/          (GGUF files stored here)
+CHAT_HISTORY_DIR    → LLM_Personal/personal_llm/chat_history/    (JSON conversation files)
+KNOWLEDGE_DB_DIR    → LLM_Personal/personal_llm/knowledge_db/    (ChromaDB vector database)
+DOCUMENTS_DIR       → LLM_Personal/personal_llm/documents/       (uploaded documents)
 ```
 
 > [!TIP]
@@ -166,8 +173,10 @@ DOCUMENTS_DIR       → personal_llm/documents/           (uploaded documents)
 
 #### Web UI (Lines 52-54)
 
-- `UI_PORT = 7865` — Gradio server port
+- `UI_PORT = 7865` — Gradio server port (legacy standalone mode)
 - `UI_HOST = "127.0.0.1"` — Localhost only (never exposed to network)
+
+> **Note:** The FastAPI backend (`api.py`) serves on port **8000** separately. See [Section 3.4](#3.4-api.py).
 
 #### RAG Settings (Lines 56-60)
 
@@ -180,7 +189,7 @@ DOCUMENTS_DIR       → personal_llm/documents/           (uploaded documents)
 
 #### Model Catalog (Lines 62-105)
 
-A dictionary of 5 pre-configured GGUF models that can be downloaded. Each entry has:
+A dictionary of pre-configured GGUF models that can be downloaded. The catalog started with 5 models in v1.0 and was expanded to **27 models** in v2.0 (see [Section 4: Model Catalog](#4-model-catalog) for the full list). Each entry has:
 
 - `name` — Human-readable name
 - `repo_id` — HuggingFace repository (e.g., `bartowski/Phi-3.1-mini-4k-instruct-GGUF`)
@@ -235,7 +244,32 @@ A dictionary of 5 pre-configured GGUF models that can be downloaded. Each entry 
 
 ---
 
-### 3.4 `model_manager.py` (212 lines)
+### 3.4 `api.py`
+
+**Purpose:** FastAPI-based REST backend that serves as the unified API for the Electron desktop app, the mobile app, and cloud inference proxying.
+
+**Key Endpoints:**
+
+| Endpoint              | Method | Purpose                                                       |
+| --------------------- | ------ | ------------------------------------------------------------- |
+| `/models`             | GET    | List available local GGUF models                              |
+| `/models/load`        | POST   | Load a specific model into memory                             |
+| `/status`             | GET    | Current engine status (loaded model, memory usage)            |
+| `/chat`               | POST   | Send a message and receive a response (supports streaming)    |
+| `/documents/upload`   | POST   | Upload a document for RAG indexing                            |
+| `/documents/query`    | POST   | Query the knowledge base                                      |
+| `/cloud/chat`         | POST   | **Cloud Proxy** — Forward requests to OpenAI/Groq/Together AI using user-provided API keys |
+| `/models/download`    | POST   | Background model downloading from HuggingFace                 |
+
+**Cloud Proxy Feature:** The `/cloud/chat` endpoint allows users to configure external API keys (OpenAI, Groq, Together AI) so they can mix local inference with cloud models. The keys are stored locally in the config and never leave the machine except when making the API call to the provider. This is the mechanism behind the "Cloud Proxy" feature listed in the overview.
+
+**Runtime:** Runs on `0.0.0.0:8000` (accessible on LAN for mobile app connectivity). The Electron app connects to `127.0.0.1:8000`, while the mobile app connects via the PC's LAN IP address.
+
+> **Dependency Note:** FastAPI and `uvicorn` are required for this module (see [Section 7: Dependencies](#7-dependencies)).
+
+---
+
+### 3.5 `model_manager.py` (212 lines)
 
 **Purpose:** Manages GGUF model files — listing, downloading, and looking up models.
 
@@ -271,7 +305,7 @@ A dictionary of 5 pre-configured GGUF models that can be downloaded. Each entry 
 
 ---
 
-### 3.5 `chat_engine.py` (267 lines)
+### 3.6 `chat_engine.py` (267 lines)
 
 **Purpose:** Multi-turn conversation management with persistent history.
 
@@ -330,7 +364,7 @@ Manages multiple conversations and interfaces with the LLM engine.
 
 ---
 
-### 3.6 `knowledge_base.py` (260 lines)
+### 3.7 `knowledge_base.py` (260 lines)
 
 **Purpose:** RAG (Retrieval-Augmented Generation) system. Upload your documents, the system chunks and embeds them, then retrieves relevant context when you ask questions.
 
@@ -384,18 +418,20 @@ ChromaDB-compatible wrapper around `sentence-transformers`. Implements `__call__
 
 ---
 
-### 3.7 `hardware.py` (256 lines)
+### 3.8 `hardware.py` (256 lines)
 
 **Purpose:** Detects your PC's hardware specs and recommends which models will run well.
 
 #### Detection Functions
 
-| Function            | Lines  | What It Detects               | How                                                       |
-| ------------------- | ------ | ----------------------------- | --------------------------------------------------------- |
-| `detect_hardware()` | 18-30  | Full system specs             | Orchestrator function                                     |
-| `_detect_cpu()`     | 33-54  | CPU name and core count       | `platform.processor()` + `wmic cpu get Name` on Windows   |
-| `_detect_ram()`     | 57-92  | Total RAM in GB               | `wmic memorychip get Capacity` → fallback to `systeminfo` |
-| `_detect_gpu()`     | 95-131 | NVIDIA GPU name, VRAM, driver | `nvidia-smi --query-gpu=...`                              |
+| Function            | Lines  | What It Detects               | How                                                                                 |
+| ------------------- | ------ | ----------------------------- | ----------------------------------------------------------------------------------- |
+| `detect_hardware()` | 18-30  | Full system specs             | Orchestrator function                                                               |
+| `_detect_cpu()`     | 33-54  | CPU name and core count       | `platform.processor()` + `wmic cpu get Name` (Windows) / `/proc/cpuinfo` (Linux)   |
+| `_detect_ram()`     | 57-92  | Total RAM in GB               | `wmic memorychip` (Windows) / `sysctl hw.memsize` (macOS) / `/proc/meminfo` (Linux)|
+| `_detect_gpu()`     | 95-131 | NVIDIA GPU name, VRAM, driver | `nvidia-smi --query-gpu=...` (cross-platform for NVIDIA GPUs)                       |
+
+> **Cross-platform note:** The detection functions use platform-specific commands with fallbacks. `_detect_cpu()` and `_detect_ram()` try Windows-first commands (`wmic`, `systeminfo`) and fall back to POSIX methods on Linux/macOS. `_detect_gpu()` calls `nvidia-smi`, which is available on all platforms with NVIDIA drivers installed. Apple Silicon (M1/M2/M3) GPU detection is handled implicitly — `llama-cpp-python` auto-uses Metal when available without explicit GPU detection.
 
 #### Recommendation Engine
 
@@ -421,9 +457,9 @@ Prints a formatted report showing:
 
 ---
 
-### 3.8 `web_ui.py` (510 lines)
+### 3.9 `web_ui.py` (510 lines)
 
-**Purpose:** Premium Gradio web interface. This is what you see in the browser.
+**Purpose:** Standalone Gradio web interface. This is the legacy browser-based UI accessible at `http://127.0.0.1:7865`. In v2.0, the primary desktop experience uses Electron + FastAPI instead (see [Section 3.11](#311-electron-desktop-app-ui)), but this Gradio UI remains functional as a standalone launcher.
 
 #### Custom CSS (Lines 29-113)
 
@@ -448,17 +484,17 @@ Implements a **dark glassmorphism** theme:
 
 **UI Methods:**
 
-| Method                    | Purpose                                                                                                                      |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------- | ----------------- |
-| `_get_available_models()` | Lists `.gguf` files in models directory for dropdown                                                                         |
-| `_get_status_text()`      | Builds status bar: `🟢 Model: X                                                                                              | Size: Y GB | Context: Z tokens | 🔒 Fully Offline` |
-| `_load_model()`           | Loads model from dropdown selection. Gets chat format from catalog.                                                          |
+| Method                    | Purpose                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
+| `_get_available_models()` | Lists `.gguf` files in models directory for dropdown                                                |
+| `_get_status_text()`      | Builds status bar: `🟢 Model: X | Size: Y GB | Context: Z tokens | 🔒 Fully Offline`               |
+| `_load_model()`           | Loads model from dropdown selection. Gets chat format from catalog.                                 |
 | `_chat_respond()`         | **Main chat handler.** Streaming response. Handles RAG context injection. Yields updated chat history for real-time display. |
-| `_new_chat()`             | Resets chat history, creates new conversation.                                                                               |
-| `_upload_document()`      | Uploads file to knowledge base via `KnowledgeBase.add_file()`.                                                               |
-| `_export_chat()`          | Exports current conversation to `personal_llm/exports/chat_{id}.md`.                                                         |
-| `_clear_knowledge_base()` | Clears all RAG documents.                                                                                                    |
-| `_get_kb_stats()`         | Shows knowledge base statistics.                                                                                             |
+| `_new_chat()`             | Resets chat history, creates new conversation.                                                      |
+| `_upload_document()`      | Uploads file to knowledge base via `KnowledgeBase.add_file()`.                                      |
+| `_export_chat()`          | Exports current conversation to `personal_llm/exports/chat_{id}.md`.                                |
+| `_clear_knowledge_base()` | Clears all RAG documents.                                                                           |
+| `_get_kb_stats()`         | Shows knowledge base statistics.                                                                    |
 
 **UI Layout (Lines 305-478):**
 
@@ -504,7 +540,7 @@ Top-level launcher:
 
 ---
 
-### 3.9 `setup_models.py` (78 lines)
+### 3.10 `setup_models.py` (78 lines)
 
 **Purpose:** Interactive command-line tool to download GGUF models.
 
@@ -527,23 +563,26 @@ Top-level launcher:
 
 ---
 
-### 3.10 `launch_personal_llm.py` (127 lines)
+### 3.11 Electron Desktop App (`ui/`)
 
-**Purpose:** One-click launcher. The single entry point to start everything.
+**Purpose:** The primary v2.0 desktop experience. A standalone React + Electron application that wraps the FastAPI backend in a native window.
 
-**Flow:**
+**How it works:**
 
-1. **Banner** — Prints project title
-2. **Check dependencies** — Verifies `llama-cpp-python` and `gradio` are installed
-3. **Hardware report** — Calls `hardware.print_hardware_report()` to show PC specs
-4. **Check models** — Verifies at least one `.gguf` model exists. If not, offers interactive download.
-5. **Launch** — Imports and calls `web_ui.launch_ui()`
+1. `npm run electron:dev` starts the FastAPI backend (`api.py` on port 8000) in a background process.
+2. The Electron main process opens a `BrowserWindow` pointing to the bundled React UI.
+3. The React frontend communicates with the FastAPI backend via `http://127.0.0.1:8000`.
+4. On window close, the Electron process gracefully shuts down the FastAPI server and unloads the LLM.
 
----
+**Key files in `ui/`:**
 
-### 3.11 `desktop_app.py` (88 lines)
+- Standalone React UI components (chat interface, model selector, settings, RAG panel)
+- Electron main process configuration
+- Build scripts for packaging
 
-**Purpose:** The native Windows desktop wrapper.
+> **Relationship to `desktop_app.py`:** The older `desktop_app.py` (88 lines) at the project root is a lightweight **pywebview** wrapper that serves the Gradio UI in a native window. It was the v1.0 desktop approach. In v2.0, the Electron app in `ui/` replaces it as the primary desktop experience, though `desktop_app.py` still works as a fallback.
+
+#### `desktop_app.py` (88 lines) — Legacy Desktop Wrapper
 
 **Flow:**
 
@@ -565,18 +604,92 @@ Top-level launcher:
 
 ---
 
-### 3.11 `requirements.txt` (19 lines)
+### 3.12 Mobile App (`mobile/`)
+
+**Purpose:** React Native (Expo) Android app that connects to the FastAPI backend over your local network, providing a mobile chat interface.
+
+**Key details:**
+
+- **Framework:** React Native with Expo
+- **Connection:** Connects to `http://<YOUR_PC_IP>:8000` over LAN (Wi-Fi). The mobile device must be on the same network as the PC running the backend.
+- **Features:** Model switching, multi-turn chat, persistent local settings (stored on-device via AsyncStorage)
+- **Routing:** Uses Expo Router with `app/` directory (index screen for chat, settings screen for configuration)
+- **Build:** Uses EAS (Expo Application Services) for cloud builds. `eas.json` contains the build configuration. Outputs `.aab` (Android App Bundle) or `.apk`.
+
+> **Important:** The mobile app does NOT run any AI locally on the phone. It sends requests to the FastAPI backend running on your PC. If the PC is off or unreachable, the app cannot function.
+
+---
+
+### 3.13 Launch Website (`website/`)
+
+**Purpose:** A Next.js 16 marketing/launch page for the project. Static site that showcases features and provides download links.
+
+**Key details:**
+
+- **Framework:** Next.js 16 (App Router)
+- **Styling:** Tailwind CSS with a dark glassmorphism theme matching the desktop app
+- **Animations:** Framer Motion for scroll-triggered animations and transitions
+- **Build Output:** Static HTML export (`website/out/`) — can be deployed to any static hosting (GitHub Pages, Vercel, Netlify) for free
+- **No backend:** This is a purely static site. It does not connect to or interact with the LLM backend.
+
+---
+
+### 3.14 `launch_personal_llm.py` (127 lines)
+
+**Purpose:** Legacy one-click CLI launcher. The single entry point to start the Gradio web UI.
+
+**Flow:**
+
+1. **Banner** — Prints project title
+2. **Check dependencies** — Verifies `llama-cpp-python` and `gradio` are installed
+3. **Hardware report** — Calls `hardware.print_hardware_report()` to show PC specs
+4. **Check models** — Verifies at least one `.gguf` model exists. If not, offers interactive download.
+5. **Launch** — Imports and calls `web_ui.launch_ui()`
+
+> **Note:** In v2.0, the preferred launch method is `npm run electron:dev` (from the `ui/` folder) or `npm run electron:start`. This legacy launcher still works for the standalone Gradio experience.
+
+---
+
+### 3.15 Build & Packaging Files
+
+#### `personal_llm.spec` (PyInstaller Config)
+
+PyInstaller spec file that defines how to compile the Python backend into a standalone Windows `.exe`.
+
+**Key settings:**
+
+- Uses `onedir` mode (not `onefile`) for faster startup without temporary extraction delay
+- Bundles `llama_cpp` DLL dependencies for CPU inference
+- Configures data paths to use `sys.executable` and `%LOCALAPPDATA%` for user data persistence
+
+#### `installer.iss` (Inno Setup Script)
+
+Inno Setup 6 compiler script that packages the PyInstaller `dist/PersonalLLM` folder into a professional Windows installer (`PersonalLLM_Setup_v1.0.0.exe`, ~300MB).
+
+**Creates:**
+
+- Desktop shortcut
+- Start Menu entries
+- Uninstaller support
+- Standard Windows "Add/Remove Programs" entry
+
+---
+
+### 3.16 `requirements.txt` (19+ lines)
 
 **Dependencies:**
 
-| Package                 | Version | Purpose                            | Required?     |
-| ----------------------- | ------- | ---------------------------------- | ------------- |
-| `llama-cpp-python`      | ≥0.3.0  | Core LLM engine (loads GGUF files) | **Yes**       |
-| `huggingface-hub`       | ≥0.20.0 | Download models (one-time)         | Yes for setup |
-| `gradio`                | ≥4.0.0  | Web UI framework                   | **Yes**       |
-| `chromadb`              | ≥0.5.0  | Vector database for RAG            | Only for RAG  |
-| `sentence-transformers` | ≥3.0.0  | Text embeddings for RAG            | Only for RAG  |
-| `PyPDF2`                | ≥3.0.0  | PDF text extraction                | Only for PDFs |
+| Package                 | Version | Purpose                                     | Required?            |
+| ----------------------- | ------- | ------------------------------------------- | -------------------- |
+| `llama-cpp-python`      | ≥0.3.0  | Core LLM engine (loads GGUF files)          | **Yes**              |
+| `fastapi`               | ≥0.100  | REST API backend for desktop & mobile apps  | **Yes**              |
+| `uvicorn`               | ≥0.20   | ASGI server to run FastAPI                  | **Yes**              |
+| `huggingface-hub`       | ≥0.20.0 | Download models (one-time)                  | Yes for setup        |
+| `gradio`                | ≥4.0.0  | Legacy web UI framework                     | Only for legacy UI   |
+| `chromadb`              | ≥0.5.0  | Vector database for RAG                     | Only for RAG         |
+| `sentence-transformers` | ≥3.0.0  | Text embeddings for RAG                     | Only for RAG         |
+| `PyPDF2`                | ≥3.0.0  | PDF text extraction                         | Only for PDFs        |
+| `pywebview`             | ≥4.0    | Native window for legacy desktop_app.py     | Only for legacy app  |
 
 **Python Version Required:** Python 3.10 or 3.11 recommended. (Tested on 3.10+)
 
@@ -638,7 +751,11 @@ The catalog was massively expanded in v2.0 to include **27 fully open-source and
 User types message
     │
     ▼
-web_ui._chat_respond()
+Electron UI / Mobile App / Gradio UI
+    │
+    ├── (Electron/Mobile) → POST /chat to FastAPI (api.py:8000)
+    │   OR
+    ├── (Gradio) → web_ui._chat_respond() directly
     │
     ├── Check if model is loaded
     ├── Create/get conversation
@@ -663,12 +780,37 @@ llm_engine.chat(messages, stream=True)
     ▼
 Tokens yielded one at a time
     │
-    ├── Each token → Update Gradio chatbot display (real-time)
+    ├── Each token → Update UI display (real-time streaming)
     ├── Accumulated into full response
     │
     ▼
 Conversation saved to chat_history/{id}.json
 ```
+
+### Cloud Proxy Flow
+
+```
+User selects a cloud model (e.g., GPT-4, Groq Llama)
+    │
+    ▼
+Electron UI / Mobile App
+    │
+    ├── POST /cloud/chat to FastAPI (api.py:8000)
+    │
+    ▼
+api.py reads locally-stored API key
+    │
+    ├── Forwards request to external provider (OpenAI/Groq/Together)
+    ├── Streams response back to the client
+    │
+    ▼
+Response displayed in UI
+    │
+    ▼
+Conversation saved to chat_history/{id}.json
+```
+
+> **Note:** Cloud proxy is the ONLY feature that makes network calls after initial setup. It is entirely opt-in and requires manually configuring API keys.
 
 ### RAG (Document Q&A) Flow
 
@@ -704,12 +846,14 @@ LLM answers using the retrieved context
 
 ## 7. Dependencies
 
-### Runtime Stack
+### Runtime Stack (Core PC App)
 
 ```
 Your Python Script
     │
-    ├── gradio (Web UI framework)
+    ├── fastapi + uvicorn (REST API server)
+    │
+    ├── gradio (Legacy Web UI framework — optional in v2.0)
     │
     ├── llama-cpp-python (Python bindings)
     │       │
@@ -729,69 +873,124 @@ Your Python Script
     └── PyPDF2 (PDF reader — optional)
 ```
 
+### Desktop App Stack (V2.0)
+- **Framework:** Electron + React
+- **Backend:** FastAPI (Python) running as a subprocess
+- **Communication:** HTTP to `127.0.0.1:8000`
+
+### Mobile App Stack (V2.0)
+- **Framework:** React Native (Expo)
+- **Networking:** Local LAN connection to the FastAPI backend (`http://YOUR_PC_IP:8000`)
+- **Key Features:** Model switching, chat interface, local persistent settings.
+- **Build Output:** Standalone Android `.aab` / `.apk`
+
+### Launch Website Stack (V2.0)
+- **Framework:** Next.js 16 (App Router)
+- **Styling:** Tailwind CSS (Dark Glassmorphism theme to match desktop app)
+- **Animations:** Framer Motion
+- **Build Output:** Static HTML (`/out`) for free global hosting
+
 ### What Does NOT Touch the Internet
 
-| Component             | Network Access                          |
-| --------------------- | --------------------------------------- |
-| LLM inference         | ❌ Never                                |
-| Chat conversations    | ❌ Never                                |
-| Conversation history  | ❌ Never                                |
-| RAG document indexing | ❌ Never                                |
-| RAG queries           | ❌ Never                                |
-| Web UI (Gradio)       | ❌ localhost only (127.0.0.1)           |
-| Model download        | ✅ One-time only, via `setup_models.py` |
+| Component             | Network Access                                           |
+| --------------------- | -------------------------------------------------------- |
+| LLM inference         | ❌ Never                                                 |
+| Chat conversations    | ❌ Never                                                 |
+| Conversation history  | ❌ Never                                                 |
+| RAG document indexing  | ❌ Never                                                 |
+| RAG queries           | ❌ Never                                                 |
+| Web UI (Gradio)       | ❌ localhost only (127.0.0.1)                            |
+| FastAPI backend       | ❌ LAN only (0.0.0.0:8000, not internet-facing)         |
+| Cloud Proxy           | ✅ Only when user opts in with API keys                  |
+| Model download        | ✅ One-time only, via `setup_models.py`                  |
 
 ---
 
 ## 8. Directory Structure
 
 ```
-LLM_Enhanced/
+LLM_Personal/
 │
-├── personal_llm/                    # Main package
-│   ├── __init__.py                  # Package init (8 lines)
+├── personal_llm/                    # Main package (Core LLM Backend/Engine)
+│   ├── __init__.py                  # Package init, version string
+│   ├── api.py                       # FastAPI REST backend (serves desktop + mobile)
 │   ├── config.py                    # All configuration (106 lines)
 │   ├── llm_engine.py                # Core inference engine (375 lines)
-│   └── ... (other source files)
+│   ├── model_manager.py             # Model listing, downloading, lookup (212 lines)
+│   ├── chat_engine.py               # Multi-turn conversation management (267 lines)
+│   ├── knowledge_base.py            # RAG system with ChromaDB (260 lines)
+│   ├── hardware.py                  # Hardware detection & model recommendations (256 lines)
+│   ├── web_ui.py                    # Gradio web interface (510 lines)
+│   ├── setup_models.py              # Interactive model download CLI (78 lines)
+│   ├── requirements.txt             # Python dependencies
+│   ├── chat_history/                # Saved conversations (JSON files)
+│   ├── knowledge_db/                # ChromaDB vector database
+│   ├── documents/                   # Uploaded RAG documents
+│   └── exports/                     # Exported chat markdown files
+│
+├── mobile/                          # React Native Mobile App (Expo)
+│   ├── app/                         # App routing (index, settings)
+│   └── eas.json                     # EAS cloud build config
+│
+├── website/                         # Next.js Launch Website
+│   ├── src/app/                     # Landing page & globals.css
+│   └── out/                         # Final static build files
+│
+├── ui/                              # Electron Desktop App
+│   └── (React UI + Electron main process configuration)
 │
 ├── personal_llm_models/             # GGUF model files (auto-created)
-│   └── *.gguf                      # Downloaded model files
+│   └── *.gguf                       # Downloaded open-weights models
 │
-├── launch_personal_llm.py           # CLI Launcher
-├── desktop_app.py                   # Desktop App Launcher Hook
+├── launch_personal_llm.py           # Legacy CLI Launcher (starts Gradio UI)
+├── desktop_app.py                   # Legacy pywebview Desktop Wrapper
 ├── personal_llm.spec                # PyInstaller build config
-├── installer.iss                    # Inno Setup compiler script
+├── installer.iss                    # Inno Setup compiler script (Windows installer)
 │
 └── PROJECT_REPORT.md                # This file
 ```
 
-**Total codebase: ~2,418 lines across 11 files**
+**Total codebase: Full-stack monorepo spanning Python, React, React Native, and Next.js.**
 
 ---
 
 ## 9. Setup & Usage
 
-### First Time Setup
+### 🚀 V2.0.0 Live Assets
+
+- **Mobile App Download:** [🤖 Download Android App (EAS APK)](https://expo.dev/artifacts/eas/9DMWPB2LSUeQnUJi7DCr1f.apk)
+- **Website Source:** See `website/out/` for the deployable Next.js launch site.
+
+### First Time Setup (Backend Engine)
 
 ```powershell
 # Step 1: Install Python dependencies
 pip install -r personal_llm/requirements.txt
 
 # Step 2: (Optional) Enable GPU acceleration
-$env:CMAKE_ARGS="-DGGML_CUDA=on"
+`$env:CMAKE_ARGS="-DGGML_CUDA=on"
 pip install llama-cpp-python --force-reinstall --no-cache-dir
 
-# Step 3: Download a model (requires internet, one-time only)
-python personal_llm/setup_models.py
+# Step 3: Download at least one model
+python -m personal_llm.setup_models
 
-# Step 4: Launch your private AI
-python launch_personal_llm.py
+# Step 4: Launch the Desktop App (Spins up Backend API + Electron UI)
+cd ui
+npm install
+npm run electron:dev
 ```
 
 ### Daily Usage
 
 ```powershell
-# Just run this — everything else is automatic
+# In the /ui folder:
+npm run electron:start
+```
+
+### Alternative: Legacy Gradio Launcher
+
+```powershell
+# Launches standalone Gradio web UI at http://127.0.0.1:7865
 python launch_personal_llm.py
 ```
 
@@ -843,16 +1042,19 @@ python -m personal_llm.model_manager
 
 | Aspect           | Detail                                                                            |
 | ---------------- | --------------------------------------------------------------------------------- |
-| **Network**      | UI serves on `127.0.0.1` only — not accessible from other devices on your network |
-| **Data Storage** | All data in local directories under `LLM_Enhanced/`                               |
+| **Network**      | Gradio UI serves on `127.0.0.1` only. FastAPI serves on `0.0.0.0:8000` (LAN-accessible for mobile app — see warning below). |
+| **Data Storage** | All data in local directories under `LLM_Personal/` or `%LOCALAPPDATA%\PersonalLLM` |
 | **No Telemetry** | Zero analytics, tracking, or phone-home                                           |
-| **No Cloud**     | No API keys, no cloud services, no external servers                               |
+| **No Cloud**     | No API keys required. Cloud proxy is opt-in only (user provides their own keys).  |
 | **Model Files**  | Binary `.gguf` files on your disk — no DRM, no license servers                    |
 | **Chat History** | Plain JSON files you can read, edit, or delete anytime                            |
 | **RAG Database** | SQLite-based ChromaDB — a local file, not a server                                |
 
+> [!WARNING]
+> **LAN Exposure (FastAPI):** The FastAPI backend binds to `0.0.0.0:8000` so the mobile app can connect over Wi-Fi. This means **any device on your local network** can reach the API. If you're on a shared/public Wi-Fi network, other users could potentially interact with your AI or access uploaded RAG documents. For maximum security, only run the backend on trusted private networks, or use a firewall rule to restrict access to specific IPs.
+
 > [!CRITICAL]
-> **External Sharing Warning:** The `--share` flag in the launcher creates a **public link** (e.g., `https://xyz.gradio.live`) to your local machine.
+> **External Sharing Warning:** The `--share` flag in the legacy launcher creates a **public link** (e.g., `https://xyz.gradio.live`) to your local machine.
 >
 > If you run `python launch_personal_llm.py --share`:
 >
@@ -864,4 +1066,4 @@ python -m personal_llm.model_manager
 
 ---
 
-_This report was generated on February 18, 2026. All file contents and line counts are accurate as of this date._
+_This report was generated on February 27, 2026. All file contents and line counts are accurate as of this date._

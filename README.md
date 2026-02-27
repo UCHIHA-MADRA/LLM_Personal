@@ -20,15 +20,19 @@ Run a powerful AI assistant (like ChatGPT) entirely on your own computer. Your c
 
 ### 1. Clone & Install
 
-```powershell
-git clone https://github.com/YOUR_USERNAME/personal-llm.git
-cd personal-llm
+### 1. Clone & Install
 
-# Install all dependencies
+```powershell
+git clone https://github.com/UCHIHA-MADRA/LLM_Personal.git
+cd LLM_Personal
+
+# Install all backend dependencies
 pip install -r personal_llm/requirements.txt
 
-# Install desktop app dependencies
-pip install pywebview
+# Install Electron desktop app dependencies
+cd ui
+npm install
+cd ..
 ```
 
 > **NVIDIA GPU Users** — Install the CUDA-accelerated LLM engine for 10–50x faster inference:
@@ -57,10 +61,11 @@ You have **two ways** to run Personal LLM:
 
 #### 🖥️ Option A: Desktop App (Recommended)
 
-Opens in a native window — no browser needed, feels like a real application.
+Opens in a beautiful native desktop window powered by Electron and React.
 
 ```powershell
-python desktop_app.py
+cd ui
+npm run electron:dev
 ```
 
 #### 🌐 Option B: Web UI
@@ -101,7 +106,7 @@ Turn Personal LLM into a distributable Windows application that anyone can run �
 
 ```powershell
 # Install build tools
-pip install pyinstaller pywebview
+pip install pyinstaller
 
 # For CPU-only build (smaller, works everywhere):
 pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
@@ -140,12 +145,10 @@ You should see a splash screen, then the full AI interface loads in a native win
 dist/PersonalLLM/
 ├── PersonalLLM.exe              ← Double-click to launch
 ├── personal_llm_models/         ← Place .gguf model files here
-├── personal_llm_data/           ← Auto-created: chat history, RAG database
-│   ├── chat_history/
-│   ├── knowledge_db/
-│   └── documents/
 └── _internal/                   ← Supporting libraries (do not modify)
 ```
+
+*(User data like chat history and RAG databases will be created automatically in `%LOCALAPPDATA%\PersonalLLM` on first run).*
 
 ### Distribution Checklist
 
@@ -156,7 +159,6 @@ When sharing the app with others, include:
 | `PersonalLLM.exe` | ✅ Yes | The main application |
 | `_internal/` folder | ✅ Yes | All bundled dependencies |
 | `personal_llm_models/` folder | ✅ Yes | Must contain at least one `.gguf` model |
-| `personal_llm_data/` folder | ❌ No | Auto-created on first run |
 
 > [!IMPORTANT]
 > **Model files are large** (2–5 GB each). You'll likely want to distribute models separately
@@ -179,15 +181,15 @@ A: Place `.gguf` model files in `personal_llm_models/` next to the `.exe` (or ne
 A: If you don't have a GPU, use a smaller model like **Phi-3 Mini** (2.4 GB). It's designed for CPUs.
 
 **Q: "No module named..." error?**
-A: Run `pip install -r personal_llm/requirements.txt` and `pip install pywebview`.
+A: Run `pip install -r personal_llm/requirements.txt` and `cd ui && npm install`.
 
 **Q: The port is already in use**
 A: The desktop app auto-finds a free port. The web UI uses port 7865 by default — if that's taken, set a custom one: `set PERSONAL_LLM_PORT=8080` before launching.
 
 **Q: Where is my data?**
 A: Everything is stored locally:
-- **Dev mode**: Inside the `personal_llm/` folder
-- **Desktop app (.exe)**: In `personal_llm_data/` next to the `.exe`
+- **Dev mode**: Inside the `LLM_Personal/personal_llm/` folder
+- **Desktop app (.exe)**: In `%LOCALAPPDATA%\PersonalLLM`
 
 ---
 
@@ -195,10 +197,13 @@ A: Everything is stored locally:
 
 ```
 LLM_Personal/
-├── desktop_app.py              ← Desktop app launcher (pywebview)
+├── ui/                         ← Electron Desktop App Frontend
+├── mobile/                     ← React Native Expo Mobile App
+├── website/                    ← Next.js Launch Website
 ├── launch_personal_llm.py      ← Web UI launcher (browser)
 ├── personal_llm.spec           ← PyInstaller build config
 ├── personal_llm/
+│   ├── api.py                  ← FastAPI connection
 │   ├── config.py               ← All settings & paths
 │   ├── web_ui.py               ← Gradio interface
 │   ├── llm_engine.py           ← LLM inference engine

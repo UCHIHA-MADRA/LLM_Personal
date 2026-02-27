@@ -42,6 +42,17 @@ export default function App() {
   const [catalog, setCatalog] = useState<any[]>([]);
   const [isModalVisible, setModalVisible] = useState(false);
   const [isLoadingModel, setIsLoadingModel] = useState(false);
+
+  // New UI States
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const [isSettingsOpen, setSettingsOpen] = useState(false);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [currentConvId, setCurrentConvId] = useState<string | null>(null);
+
+  // Settings State
+  const [settings, setSettings] = useState({ openai_key: '', groq_key: '', together_key: '' });
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
   const flatListRef = useRef<FlatList>(null);
 
   // Check backend status and fetch catalog
@@ -59,10 +70,66 @@ export default function App() {
       .catch(console.error);
   };
 
+  const fetchConversations = () => {
+    fetch(`${API_BASE}/api/conversations`)
+      .then(res => res.json())
+      .then(data => setConversations(data || []))
+      .catch(console.error);
+  };
+
+  const fetchSettings = () => {
+    fetch(`${API_BASE}/api/settings`)
+      .then(res => res.json())
+      .then(data => setSettings({
+        openai_key: data.openai_key || '',
+        groq_key: data.groq_key || '',
+        together_key: data.together_key || ''
+      }))
+      .catch(console.error);
+  };
+
   useEffect(() => {
     fetchStatus();
     fetchCatalog();
+    fetchConversations();
+    fetchSettings();
   }, []);
+
+  const loadConversation = async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/conversations/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data.messages || []);
+        setCurrentConvId(data.id);
+        setSidebarOpen(false);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const createNewChat = () => {
+    setMessages([{ id: '1', role: 'assistant', content: 'Hello! I am your Personal LLM running on your desktop. Ask me anything!' }]);
+    setCurrentConvId(null);
+    setSidebarOpen(false);
+  };
+
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      await fetch(`${API_BASE}/api/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+      setSettingsOpen(false);
+    } catch (e) {
+      alert('Failed to save settings.');
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
 
   const handleLoadModel = async (filename: string) => {
     setIsLoadingModel(true);
@@ -99,7 +166,12 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input, max_tokens: 1024, temperature: 0.7 }),
+        body: JSON.stringify({
+          message: input,
+          max_tokens: 1024,
+          temperature: 0.7,
+          conversation_id: currentConvId
+        }),
       });
 
       if (!response.ok) throw new Error('Stream failed');
@@ -127,7 +199,7 @@ export default function App() {
               } else if (data.type === 'done' || data.type === 'error') {
                 break;
               }
-            } catch {}
+            } catch { }
           }
         }
       }
@@ -171,16 +243,116 @@ export default function App() {
 
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => { setModalVisible(true); fetchCatalog(); }}>
-            <Text style={styles.headerTitle}>🧠 Personal LLM <Text style={{fontSize: 14}}>(Models)</Text></Text>
-          </TouchableOpacity>
-          <View style={styles.statusChip}>
-            <View style={[styles.statusDot, { backgroundColor: status.loaded ? '#22c55e' : '#ef4444' }]} />
-            <Text style={styles.statusText}>
-              {status.loaded ? status.name : 'Not Connected'}
-            </Text>
+          <View style={styles.headerLeft}>
+            <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.iconBtn}>
+              <Text style={styles.iconText}>☰</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { setModalVisible(true); fetchCatalog(); }}>
+              <Text style={styles.headerTitle}>🧠 Personal LLM</Text>
+              <View style={styles.statusChip}>
+                <View style={[styles.statusDot, { backgroundColor: status.loaded ? '#22c55e' : '#ef4444' }]} />
+                <Text style={styles.statusText}>
+                  {status.loaded ? status.name : 'Not Connected'}
+                </Text>
+              </View>
+            </TouchableOpacity>
           </View>
+          <TouchableOpacity onPress={() => setSettingsOpen(true)} style={styles.iconBtn}>
+            <Text style={styles.iconText}>⚙️</Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Sidebar Drawer */}
+        <Modal visible={isSidebarOpen} animationType="fade" transparent={true} onRequestClose={() => setSidebarOpen(false)}>
+          <View style={styles.sidebarOverlay}>
+            <View style={styles.sidebarContent}>
+              <View style={styles.sidebarHeader}>
+                <Text style={styles.sidebarTitle}>Chats</Text>
+                <TouchableOpacity onPress={() => setSidebarOpen(false)}>
+                  <Text style={styles.closeModalText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity style={styles.newChatBtn} onPress={createNewChat}>
+                <Text style={styles.newChatText}>+ New Chat</Text>
+              </TouchableOpacity>
+              <ScrollView style={styles.sidebarScroll}>
+                {conversations.map(conv => (
+                  <TouchableOpacity
+                    key={conv.id}
+                    style={[styles.sidebarItem, currentConvId === conv.id && styles.sidebarItemActive]}
+                    onPress={() => loadConversation(conv.id)}
+                  >
+                    <Text style={styles.sidebarItemTitle} numberOfLines={1}>{conv.title}</Text>
+                    <Text style={styles.sidebarItemDate}>{new Date(conv.updated_at).toLocaleDateString()}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+            <TouchableOpacity style={styles.sidebarCloseArea} onPress={() => setSidebarOpen(false)} />
+          </View>
+        </Modal>
+
+        {/* Settings Modal */}
+        <Modal visible={isSettingsOpen} animationType="slide" transparent={true} onRequestClose={() => setSettingsOpen(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Settings</Text>
+                <TouchableOpacity onPress={() => setSettingsOpen(false)}>
+                  <Text style={styles.closeModalText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.catalogScroll}>
+                <Text style={styles.sectionTitle}>Cloud Proxy API Keys</Text>
+                <Text style={styles.settingsDesc}>Configure these to access cloud models via /cloud/chat.</Text>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>OpenAI API Key</Text>
+                  <TextInput
+                    style={styles.settingsInput}
+                    value={settings.openai_key}
+                    onChangeText={t => setSettings(prev => ({ ...prev, openai_key: t }))}
+                    placeholder="sk-..."
+                    placeholderTextColor="#555"
+                    secureTextEntry
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Groq API Key</Text>
+                  <TextInput
+                    style={styles.settingsInput}
+                    value={settings.groq_key}
+                    onChangeText={t => setSettings(prev => ({ ...prev, groq_key: t }))}
+                    placeholder="gsk_..."
+                    placeholderTextColor="#555"
+                    secureTextEntry
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Together AI API Key</Text>
+                  <TextInput
+                    style={styles.settingsInput}
+                    value={settings.together_key}
+                    onChangeText={t => setSettings(prev => ({ ...prev, together_key: t }))}
+                    placeholder="..."
+                    placeholderTextColor="#555"
+                    secureTextEntry
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.saveBtn, isSavingSettings && styles.loadBtnDisabled]}
+                  onPress={handleSaveSettings}
+                  disabled={isSavingSettings}
+                >
+                  <Text style={styles.saveBtnText}>{isSavingSettings ? 'Saving...' : 'Save Settings'}</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
 
         {/* Model Catalog Modal */}
         <Modal visible={isModalVisible} animationType="slide" transparent={true} onRequestClose={() => setModalVisible(false)}>
@@ -197,8 +369,8 @@ export default function App() {
                   <View key={model.key} style={styles.modelCardDownloaded}>
                     <Text style={styles.modelName}>{model.name}</Text>
                     <Text style={styles.modelDesc}>{model.tier ? `Tier ${model.tier}` : 'Local'} • {model.size_gb} GB</Text>
-                    <TouchableOpacity 
-                      style={[styles.loadBtn, isLoadingModel && styles.loadBtnDisabled]} 
+                    <TouchableOpacity
+                      style={[styles.loadBtn, isLoadingModel && styles.loadBtnDisabled]}
                       onPress={() => handleLoadModel(model.filename)}
                       disabled={isLoadingModel}
                     >
@@ -259,29 +431,31 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#0B0E14' },
-  container: { 
-    flex: 1, 
-    width: '100%', 
-    maxWidth: isWeb ? 800 : '100%', 
-    alignSelf: 'center', 
-    borderLeftWidth: isWeb ? 1 : 0, 
-    borderRightWidth: isWeb ? 1 : 0, 
-    borderColor: 'rgba(255,255,255,0.06)' 
+  container: {
+    flex: 1,
+    width: '100%',
+    maxWidth: isWeb ? 800 : '100%',
+    alignSelf: 'center',
+    borderLeftWidth: isWeb ? 1 : 0,
+    borderRightWidth: isWeb ? 1 : 0,
+    borderColor: 'rgba(255,255,255,0.06)'
   },
 
   // Header
   header: {
-    paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12,
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12,
     borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
-  headerTitle: { color: '#fff', fontSize: 22, fontWeight: '800' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center' },
+  iconBtn: { padding: 8 },
+  iconText: { color: '#fff', fontSize: 24 },
+  headerTitle: { color: '#fff', fontSize: 18, fontWeight: '800', marginLeft: 8 },
   statusChip: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.06)',
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
+    flexDirection: 'row', alignItems: 'center', marginTop: 4, marginLeft: 8
   },
-  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  statusText: { color: '#aaa', fontSize: 12 },
+  statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
+  statusText: { color: '#aaa', fontSize: 11 },
 
   // Chat
   chatList: { paddingHorizontal: 16, paddingVertical: 12 },
@@ -338,15 +512,37 @@ const styles = StyleSheet.create({
   closeModalText: { color: '#aaa', fontSize: 20, padding: 5 },
   catalogScroll: { flex: 1 },
   sectionTitle: { color: '#8b5cf6', fontSize: 14, fontWeight: 'bold', textTransform: 'uppercase', marginTop: 24, marginBottom: 12, letterSpacing: 1 },
-  
+
   modelCardDownloaded: { backgroundColor: 'rgba(79, 70, 229, 0.1)', borderWidth: 1, borderColor: 'rgba(79, 70, 229, 0.3)', borderRadius: 16, padding: 16, marginBottom: 12 },
   modelCardAvailable: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, padding: 16, marginBottom: 12 },
   modelName: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 4 },
   modelDesc: { color: '#aaa', fontSize: 13, lineHeight: 18, marginBottom: 8 },
   modelMeta: { color: '#6366f1', fontSize: 12, fontWeight: 'bold', marginBottom: 8 },
-  
+
   loadBtn: { backgroundColor: '#4f46e5', paddingVertical: 10, borderRadius: 10, alignItems: 'center', marginTop: 8 },
   loadBtnDisabled: { opacity: 0.5 },
   loadBtnText: { color: '#fff', fontWeight: 'bold' },
   downloadHint: { color: '#555', fontSize: 12, fontStyle: 'italic', marginTop: 4 },
+
+  // Sidebar
+  sidebarOverlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.5)' },
+  sidebarContent: { width: '80%', maxWidth: 320, backgroundColor: '#0B0E14', height: '100%', padding: 20, borderRightWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  sidebarCloseArea: { flex: 1 },
+  sidebarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  sidebarTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  newChatBtn: { backgroundColor: '#4f46e5', padding: 12, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
+  newChatText: { color: '#fff', fontWeight: 'bold' },
+  sidebarScroll: { flex: 1 },
+  sidebarItem: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  sidebarItemActive: { backgroundColor: 'rgba(79, 70, 229, 0.1)', paddingHorizontal: 12, borderRadius: 8, borderBottomWidth: 0 },
+  sidebarItemTitle: { color: '#fff', fontSize: 15, fontWeight: '500', marginBottom: 4 },
+  sidebarItemDate: { color: '#666', fontSize: 12 },
+
+  // Settings
+  settingsDesc: { color: '#aaa', fontSize: 13, marginBottom: 20 },
+  inputGroup: { marginBottom: 16 },
+  inputLabel: { color: '#ccc', fontSize: 14, marginBottom: 8, fontWeight: '500' },
+  settingsInput: { backgroundColor: '#151923', color: '#fff', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  saveBtn: { backgroundColor: '#22c55e', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 24, marginBottom: 40 },
+  saveBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
 });
