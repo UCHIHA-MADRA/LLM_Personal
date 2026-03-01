@@ -1,6 +1,6 @@
 "use client";
 
-import { Terminal, Download, Shield, Cpu, Zap, Box, Smartphone, Globe, Code2, Server } from "lucide-react";
+import { Terminal, Download, Shield, Cpu, Zap, Box, Smartphone, Globe, Code2, Server, Monitor, Apple } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 
@@ -70,15 +70,19 @@ export default function Home() {
           >
             <div className="flex flex-col items-center gap-2 w-full sm:w-auto">
               <button className="w-full sm:w-auto px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all shadow-xl shadow-indigo-900/50 flex items-center justify-center gap-2 hover:-translate-y-1 group">
-                <Download className="w-5 h-5 group-hover:animate-bounce" /> Download for Windows
+                <Download className="w-5 h-5 group-hover:animate-bounce" /> Download Desktop App
               </button>
-              <span className="text-[11px] text-slate-500 font-medium">Windows 10/11 • 64-bit • Direct .EXE</span>
+              <div className="flex items-center gap-3 text-[11px] text-slate-400 font-medium mt-1">
+                <span className="flex items-center gap-1"><Monitor className="w-3 h-3" /> Windows</span>
+                <span className="flex items-center gap-1"><Apple className="w-3 h-3" /> macOS</span>
+                <span className="flex items-center gap-1"><Terminal className="w-3 h-3" /> Linux</span>
+              </div>
             </div>
             <div className="flex flex-col items-center gap-2 w-full sm:w-auto mt-4 sm:mt-0">
-              <a href="https://expo.dev/artifacts/eas/9DMWPB2LSUeQnUJi7DCr1f.apk" className="w-full sm:w-auto px-8 py-4 rounded-xl bg-[#1e2330] hover:bg-[#252b3b] border border-white/10 text-white font-bold transition-all flex items-center justify-center gap-2 hover:-translate-y-1">
+              <a href="https://expo.dev/artifacts/eas/coPDsvVeR34csXHpC1ygrH.apk" className="w-full sm:w-auto px-8 py-4 rounded-xl bg-[#1e2330] hover:bg-[#252b3b] border border-white/10 text-white font-bold transition-all flex items-center justify-center gap-2 hover:-translate-y-1">
                 <Smartphone className="w-5 h-5" /> Get Android APK
               </a>
-              <span className="text-[11px] text-slate-500 font-medium">Remote inference over Local WiFi</span>
+              <span className="text-[11px] text-slate-500 font-medium">Cloud AI + Local WiFi inference</span>
             </div>
           </motion.div>
         </div>

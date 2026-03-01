@@ -20,13 +20,27 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0B0E14"
       },
-      "edgeToEdgeEnabled": true,
+      "edgeToEdgeEnabled": false,
       "predictiveBackGestureEnabled": false,
       "package": "com.uchihamadara.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "largeHeap": true,
+            "extraMavenRepos": [
+              "https://jitpack.io"
+            ]
+          }
+        }
+      ],
+      "llama.rn"
+    ],
     "extra": {
       "eas": {
         "projectId": "7a49717f-3b87-4518-b48e-4c6ad378111a"

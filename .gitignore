@@ -1,43 +1,51 @@
-# Personal LLM - Git Ignore
+# Dependencies
+node_modules/
+.next/
+out/
+
+# Build outputs
+dist/
+build/
+ui/dist-electron/
+ui/python-embed/
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.blockmap
+*.spec
+*.dmg
+*.AppImage
+*.deb
+*.blockmap
 
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-.env
-
-# Models (too large for git)
+*.pyc
+*.pyo
+.venv/
 personal_llm_models/
-*.gguf
-
-# User Data (keep private)
 personal_llm/chat_history/
 personal_llm/knowledge_db/
 personal_llm/documents/
-personal_llm/exports/
+personal_llm/models/
 
-# IDE
-.vscode/
-.idea/
+# Model files (too large for git)
+*.gguf
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Cleanup
-Legacy_Projects/
+# IDE
+.idea/
+.vscode/
 
-# Build Artifacts
-ui/dist-electron/
-ui/release/
-ui/dist/
-ui/out/
-dist/
-installer_output/
-*.exe
-website/.next/
+# Expo
 mobile/.expo/
+mobile/android/
+mobile/ios/
+
+# Environment
+.env
+.env.local

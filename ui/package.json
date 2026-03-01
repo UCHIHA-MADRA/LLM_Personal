@@ -62,8 +62,8 @@
         ]
       },
       {
-        "from": "../personal_llm_models",
-        "to": "personal_llm_models",
+        "from": "python-embed",
+        "to": "python-embed",
         "filter": [
           "**/*"
         ]

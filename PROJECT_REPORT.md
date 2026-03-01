@@ -958,7 +958,7 @@ LLM_Personal/
 
 ### 🚀 V2.0.0 Live Assets
 
-- **Mobile App Download:** [🤖 Download Android App (EAS APK)](https://expo.dev/artifacts/eas/9DMWPB2LSUeQnUJi7DCr1f.apk)
+- **Mobile App Download:** [🤖 Download Android App (EAS APK)](https://expo.dev/artifacts/eas/bVGpxbF2bXXF9Vn7dfSkv3.apk)
 - **Website Source:** See `website/out/` for the deployable Next.js launch site.
 
 ### First Time Setup (Backend Engine)

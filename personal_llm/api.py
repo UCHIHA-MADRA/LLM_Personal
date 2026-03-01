@@ -38,10 +38,32 @@ app.add_middleware(
 )
 
 # ─── Global State ─────────────────────────────────────────────────────────────
-engine = get_engine()
-model_manager = ModelManager()
-chat_engine = ChatEngine(engine)
-kb = KnowledgeBase()
+# All initialization is wrapped in try/except so the API ALWAYS starts.
+# Missing optional deps (chromadb, sentence-transformers) are non-fatal.
+try:
+    engine = get_engine()
+except Exception as e:
+    logger.warning(f"LLM engine init failed (will retry on model load): {e}")
+    from .llm_engine import LLMEngine
+    engine = LLMEngine()
+
+try:
+    model_manager = ModelManager()
+except Exception as e:
+    logger.error(f"Model manager init failed: {e}")
+    model_manager = None
+
+try:
+    chat_engine = ChatEngine(engine)
+except Exception as e:
+    logger.error(f"Chat engine init failed: {e}")
+    chat_engine = None
+
+try:
+    kb = KnowledgeBase()
+except Exception as e:
+    logger.warning(f"Knowledge base unavailable (chromadb/sentence-transformers not installed): {e}")
+    kb = None
 
 # Download progress tracking (thread-safe)
 download_state: Dict[str, Any] = {}
@@ -417,16 +439,20 @@ def launch_api(port: int = 8000):
     import uvicorn
     print(f"\n[*] Launching Headless Personal LLM API at http://127.0.0.1:{port}")
     
-    # Auto-load default model if available
-    default = model_manager.get_default_model()
-    if default:
-        print("\n[*] Auto-loading default model...")
-        engine.load(
-            default["path"],
-            n_gpu_layers=config.N_GPU_LAYERS,
-            n_ctx=config.CONTEXT_SIZE,
-            chat_format=default.get("chat_format"),
-        )
+    # Auto-load default model if available (non-fatal if it fails)
+    try:
+        if model_manager:
+            default = model_manager.get_default_model()
+            if default:
+                print("\n[*] Auto-loading default model...")
+                engine.load(
+                    default["path"],
+                    n_gpu_layers=config.N_GPU_LAYERS,
+                    n_ctx=config.CONTEXT_SIZE,
+                    chat_format=default.get("chat_format"),
+                )
+    except Exception as e:
+        print(f"[!] Could not auto-load model (will work without one): {e}")
         
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 

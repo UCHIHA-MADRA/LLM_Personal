@@ -44,11 +44,13 @@ PERSONAL_LLM_DIR = _get_app_dir()
 # ─── Directories ───────────────────────────────────────────────
 
 # Where downloaded GGUF model files are stored
-MODELS_DIR = BASE_DIR / "personal_llm_models"
+# Uses PERSONAL_LLM_DIR (writable %LOCALAPPDATA% in production) instead of
+# BASE_DIR (which is read-only in Electron-packaged builds)
+MODELS_DIR = PERSONAL_LLM_DIR / "models"
 try:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 except PermissionError:
-    pass  # In frozen mode, the installer already creates this folder in Program Files
+    pass  # Will be created on first model download
 
 # Chat history persistence
 CHAT_HISTORY_DIR = PERSONAL_LLM_DIR / "chat_history"

@@ -68,6 +68,30 @@ cd ui
 npm run electron:dev
 ```
 
+### Building the Executable
+
+To compile the Electron application into a standalone distribution (e.g., `.exe` for Windows, `.dmg` for macOS, or `.AppImage` for Linux), run the build command on your native operating system:
+
+**For Windows (`.exe`):**
+```bash
+cd ui
+npm run electron:build -- --win
+```
+
+**For macOS (`.dmg`):** *(Must be run on a Mac)*
+```bash
+cd ui
+npm run electron:build -- --mac
+```
+
+**For Linux (`.AppImage` and `.deb`):**
+```bash
+cd ui
+npm run electron:build -- --linux
+```
+
+*Note: The generated setups will be placed in the `ui/dist-electron/` folder.*
+
 #### 🌐 Option B: Web UI
 
 Opens in your browser at `http://127.0.0.1:7865`.
