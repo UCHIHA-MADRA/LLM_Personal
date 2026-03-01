@@ -98,7 +98,7 @@ function AppContent() {
   // On-device state
   const [llamaContext, setLlamaContext] = useState<LlamaContext | null>(null);
   const [deviceModelName, setDeviceModelName] = useState('');
-  const [isDownloadingDevice, setIsDownloadingDevice] = useState(false);
+  const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [deviceDownloadProgress, setDeviceDownloadProgress] = useState(0);
   const [isLoadingDevice, setIsLoadingDevice] = useState(false);
   const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
@@ -196,7 +196,7 @@ function AppContent() {
 
   // ── Download model to phone storage ──
   const downloadDeviceModel = async (model: typeof DEVICE_MODELS[0]) => {
-    setIsDownloadingDevice(true);
+    setDownloadingModelId(model.id);
     setDeviceDownloadProgress(0);
     try {
       const dirInfo = await FileSystem.getInfoAsync(modelsDir);
@@ -216,12 +216,12 @@ function AppContent() {
       const result = await download.downloadAsync();
       if (result && result.uri) {
         await checkDownloadedModels();
-        Alert.alert('Download Complete', `${model.name} is ready to use!`);
+        Alert.alert('Download Complete', `${model.name} is ready to use! Tap "Load & Run" to start chatting.`);
       }
     } catch (e: any) {
       Alert.alert('Download Failed', e.message || 'Unknown error');
     } finally {
-      setIsDownloadingDevice(false);
+      setDownloadingModelId(null);
     }
   };
 
@@ -597,6 +597,14 @@ function AppContent() {
               </View>
               <ScrollView style={styles.catalogScroll}>
 
+                {/* First-use guide */}
+                {!llamaContext && !settings.groq_key && (
+                  <View style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 14, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#f59e0b' }}>
+                    <Text style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: 14, marginBottom: 6 }}>👋 Getting Started</Text>
+                    <Text style={{ color: '#94a3b8', fontSize: 13, lineHeight: 20 }}>{'Choose how to chat:\n\n📱 Device — Download a model (229 MB+) to run offline on your phone\n\n☁️ Cloud — Get a FREE Groq API key at console.groq.com for instant access'}</Text>
+                  </View>
+                )}
+
                 {/* On-Device Models */}
                 <Text style={styles.sectionTitle}>📱 On-Device Models (runs on your phone)</Text>
                 <Text style={styles.settingsDesc}>Download once, works completely offline. No internet or PC needed!</Text>
@@ -626,16 +634,16 @@ function AppContent() {
                         </View>
                       ) : (
                         <TouchableOpacity
-                          style={[styles.downloadBtn, isDownloadingDevice && styles.loadBtnDisabled]}
+                          style={[styles.downloadBtn, downloadingModelId === model.id && styles.loadBtnDisabled]}
                           onPress={() => downloadDeviceModel(model)}
-                          disabled={isDownloadingDevice}
+                          disabled={downloadingModelId !== null}
                         >
                           <Text style={styles.downloadBtnText}>
-                            {isDownloadingDevice ? `⬇ ${(deviceDownloadProgress * 100).toFixed(0)}%` : `⬇ Download (${model.size_mb < 1000 ? `${model.size_mb} MB` : `${(model.size_mb / 1024).toFixed(1)} GB`})`}
+                            {downloadingModelId === model.id ? `⬇ ${(deviceDownloadProgress * 100).toFixed(0)}%` : `⬇ Download (${model.size_mb < 1000 ? `${model.size_mb} MB` : `${(model.size_mb / 1024).toFixed(1)} GB`})`}
                           </Text>
                         </TouchableOpacity>
                       )}
-                      {isDownloadingDevice && (
+                      {downloadingModelId === model.id && (
                         <View style={styles.progressBarBg}>
                           <View style={[styles.progressBarFill, { width: `${Math.max(deviceDownloadProgress * 100, 2)}%` as any }]} />
                         </View>
@@ -646,20 +654,38 @@ function AppContent() {
 
                 {/* Cloud Models */}
                 <Text style={styles.sectionTitle}>☁️ Cloud Models (via API)</Text>
-                <Text style={styles.settingsDesc}>Fast inference. Groq models are FREE!</Text>
-                {CLOUD_MODELS.map(model => (
-                  <TouchableOpacity
-                    key={model.id}
-                    style={[styles.modelCardAvailable, selectedCloudModel.id === model.id && chatMode === 'cloud' && { borderColor: '#22c55e', borderWidth: 2 }]}
-                    onPress={() => { setSelectedCloudModel(model); setChatMode('cloud'); setModalVisible(false); }}
-                  >
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                      <Text style={styles.modelName}>{model.name}</Text>
-                      {model.free && <View style={styles.freeBadge}><Text style={styles.freeBadgeText}>FREE</Text></View>}
-                    </View>
-                    <Text style={styles.modelDesc}>{model.provider === 'groq' ? 'Ultra-fast via Groq' : 'OpenAI cloud'}</Text>
-                  </TouchableOpacity>
-                ))}
+                <Text style={styles.settingsDesc}>Fast inference. Groq models are FREE! Get a key at console.groq.com</Text>
+                {CLOUD_MODELS.map(model => {
+                  const needsKey = model.provider === 'groq' ? !settings.groq_key : !settings.openai_key;
+                  return (
+                    <TouchableOpacity
+                      key={model.id}
+                      style={[styles.modelCardAvailable, selectedCloudModel.id === model.id && chatMode === 'cloud' && { borderColor: '#22c55e', borderWidth: 2 }]}
+                      onPress={() => {
+                        if (needsKey) {
+                          Alert.alert(
+                            'API Key Required',
+                            model.provider === 'groq'
+                              ? 'You need a free Groq API key.\n\n1. Go to console.groq.com\n2. Sign up (free)\n3. Create an API key\n4. Paste it in Settings → Groq API Key'
+                              : 'You need an OpenAI API key. Enter it in Settings.',
+                            [{ text: 'Open Settings', onPress: () => { setModalVisible(false); setSettingsOpen(true); } }, { text: 'Cancel' }]
+                          );
+                          return;
+                        }
+                        setSelectedCloudModel(model); setChatMode('cloud'); setModalVisible(false);
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={styles.modelName}>{model.name}</Text>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          {needsKey && <View style={{ backgroundColor: '#7f1d1d', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ color: '#fca5a5', fontSize: 10, fontWeight: 'bold' }}>KEY NEEDED</Text></View>}
+                          {model.free && <View style={styles.freeBadge}><Text style={styles.freeBadgeText}>FREE</Text></View>}
+                        </View>
+                      </View>
+                      <Text style={styles.modelDesc}>{model.provider === 'groq' ? 'Ultra-fast via Groq' : 'OpenAI cloud'}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
 
                 {/* PC Models */}
                 {isConnected && (

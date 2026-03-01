@@ -79,7 +79,7 @@ export default function Home() {
               </div>
             </div>
             <div className="flex flex-col items-center gap-2 w-full sm:w-auto mt-4 sm:mt-0">
-              <a href="https://expo.dev/artifacts/eas/coPDsvVeR34csXHpC1ygrH.apk" className="w-full sm:w-auto px-8 py-4 rounded-xl bg-[#1e2330] hover:bg-[#252b3b] border border-white/10 text-white font-bold transition-all flex items-center justify-center gap-2 hover:-translate-y-1">
+              <a href="https://expo.dev/artifacts/eas/oo3hCTGcH35kcZ74crijag.apk" className="w-full sm:w-auto px-8 py-4 rounded-xl bg-[#1e2330] hover:bg-[#252b3b] border border-white/10 text-white font-bold transition-all flex items-center justify-center gap-2 hover:-translate-y-1">
                 <Smartphone className="w-5 h-5" /> Get Android APK
               </a>
               <span className="text-[11px] text-slate-500 font-medium">Cloud AI + Local WiFi inference</span>
