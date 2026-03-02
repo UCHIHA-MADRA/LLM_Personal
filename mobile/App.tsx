@@ -103,6 +103,11 @@ function AppContent() {
   const [isLoadingDevice, setIsLoadingDevice] = useState(false);
   const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
 
+  // Context Intelligence state (for PC mode)
+  const [useRag, setUseRag] = useState(false);
+  const [refineDepth, setRefineDepth] = useState(0);  // 0=off, 1=quick, 2=deep
+  const [contextStatus, setContextStatus] = useState('');
+
   // PC connection state
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -425,7 +430,14 @@ function AppContent() {
       const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage, max_tokens: 1024, temperature: 0.7, conversation_id: currentConvId }),
+        body: JSON.stringify({
+          message: userMessage,
+          max_tokens: 1024,
+          temperature: 0.7,
+          conversation_id: currentConvId,
+          use_rag: useRag,
+          refine_depth: refineDepth,
+        }),
       });
       if (!response.ok) throw new Error('Stream failed');
       const reader = response.body?.getReader();
@@ -438,9 +450,20 @@ function AppContent() {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.type === 'token') {
+              if (data.type === 'status') {
+                setContextStatus(data.message || '');
+              } else if (data.type === 'token') {
+                setContextStatus('');
                 setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: msg.content + data.content } : msg));
-              } else if (data.type === 'done' || data.type === 'error') break;
+              } else if (data.type === 'refine_start') {
+                setContextStatus('✨ Thinking deeper...');
+              } else if (data.type === 'refine_token') {
+                setContextStatus('');
+                setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: data.content } : msg));
+              } else if (data.type === 'done' || data.type === 'error') {
+                setContextStatus('');
+                break;
+              }
             } catch { }
           }
         }
@@ -723,6 +746,34 @@ function AppContent() {
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
+        {/* Context Intelligence Toolbar (PC mode only) */}
+        {chatMode === 'local' && isConnected && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, gap: 8 }}>
+            <TouchableOpacity
+              style={[styles.contextToggle, useRag && styles.contextToggleActive]}
+              onPress={() => setUseRag(p => !p)}
+            >
+              <Text style={[styles.contextToggleText, useRag && styles.contextToggleTextActive]}>
+                🔍 RAG {useRag ? 'ON' : 'OFF'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.contextToggle, refineDepth > 0 && styles.contextToggleActiveAmber]}
+              onPress={() => setRefineDepth(p => p === 0 ? 1 : p === 1 ? 2 : 0)}
+            >
+              <Text style={[styles.contextToggleText, refineDepth > 0 && styles.contextToggleTextActiveAmber]}>
+                ✨ {refineDepth === 0 ? 'Deep Think' : `Refine ×${refineDepth}`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {/* Context Status */}
+        {contextStatus !== '' && (
+          <View style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+            <Text style={{ color: '#818cf8', fontSize: 12 }}>{contextStatus}</Text>
+          </View>
+        )}
+
         {/* Input */}
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.inputBar}>
@@ -794,6 +845,15 @@ const styles = StyleSheet.create({
   textInput: { flex: 1, backgroundColor: '#151923', color: '#fff', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 100, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   sendBtn: { width: 42, height: 42, borderRadius: 14, backgroundColor: '#4f46e5', alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   sendBtnDisabled: { backgroundColor: '#333' },
+  sendBtnText: { color: '#fff', fontSize: 16 },
+
+  // Context Toggles
+  contextToggle: { backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  contextToggleActive: { backgroundColor: 'rgba(79,70,229,0.2)', borderColor: 'rgba(79,70,229,0.4)' },
+  contextToggleActiveAmber: { backgroundColor: 'rgba(245,158,11,0.2)', borderColor: 'rgba(245,158,11,0.4)' },
+  contextToggleText: { color: '#9ca3af', fontSize: 12 },
+  contextToggleTextActive: { color: '#818cf8', fontWeight: 'bold' },
+  contextToggleTextActiveAmber: { color: '#fbbf24', fontWeight: 'bold' },
   sendBtnText: { color: '#fff', fontSize: 16 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#0B0E14', borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '88%', padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
