@@ -7,31 +7,33 @@ out/
 dist/
 build/
 ui/dist-electron/
-ui/python-embed/
+ui/dist-electron2/
 *.exe
 *.dmg
 *.AppImage
 *.deb
 *.blockmap
-*.spec
-*.dmg
-*.AppImage
-*.deb
-*.blockmap
+
+# Bundled Python (too large for git, each user has their own)
+ui/python-embed/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
+
+# Model files (too large for git)
 personal_llm_models/
+*.gguf
+
+# User data (private, regenerated at runtime)
 personal_llm/chat_history/
 personal_llm/knowledge_db/
 personal_llm/documents/
 personal_llm/models/
-
-# Model files (too large for git)
-*.gguf
+personal_llm/exports/
+settings.json
 
 # OS
 .DS_Store
@@ -41,7 +43,7 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Expo
+# Expo / Mobile
 mobile/.expo/
 mobile/android/
 mobile/ios/

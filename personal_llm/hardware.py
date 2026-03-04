@@ -56,8 +56,11 @@ def _detect_cpu() -> Dict[str, Any]:
 
 def _detect_ram() -> float:
     """Detect total RAM in GB."""
-    try:
-        if platform.system() == "Windows":
+    system = platform.system()
+
+    # Windows: use wmic
+    if system == "Windows":
+        try:
             result = subprocess.run(
                 ["wmic", "memorychip", "get", "Capacity", "/format:list"],
                 capture_output=True, text=True, timeout=5
@@ -68,26 +71,45 @@ def _detect_ram() -> float:
                     total += int(line.split("=")[1].strip())
             if total > 0:
                 return round(total / (1024**3), 1)
-        # Fallback
-        import shutil
-        total, _, _ = shutil.disk_usage("/")
-    except Exception:
-        pass
+        except Exception:
+            pass
+        # Windows fallback: systeminfo
+        try:
+            result = subprocess.run(
+                ["systeminfo"],
+                capture_output=True, text=True, timeout=15
+            )
+            for line in result.stdout.split("\n"):
+                if "Total Physical Memory" in line:
+                    parts = line.split(":")[1].strip()
+                    number = parts.replace(",", "").replace(".", "").split()[0]
+                    return round(int(number) / 1024, 1)
+        except Exception:
+            pass
 
-    # Last resort: try psutil-like approach
-    try:
-        result = subprocess.run(
-            ["systeminfo"],
-            capture_output=True, text=True, timeout=15
-        )
-        for line in result.stdout.split("\n"):
-            if "Total Physical Memory" in line:
-                # Parse "7,599 MB" or "16,384 MB"
-                parts = line.split(":")[1].strip()
-                number = parts.replace(",", "").replace(".", "").split()[0]
-                return round(int(number) / 1024, 1)
-    except Exception:
-        pass
+    # macOS: use sysctl
+    elif system == "Darwin":
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"],
+                capture_output=True, text=True, timeout=5
+            )
+            mem_bytes = int(result.stdout.strip())
+            return round(mem_bytes / (1024**3), 1)
+        except Exception:
+            pass
+
+    # Linux: read /proc/meminfo
+    elif system == "Linux":
+        try:
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        # Format: "MemTotal:       16384000 kB"
+                        kb = int(line.split()[1])
+                        return round(kb / (1024**2), 1)
+        except Exception:
+            pass
 
     return 0.0
 

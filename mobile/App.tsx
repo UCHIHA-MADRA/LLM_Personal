@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -17,11 +17,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { initLlama, type LlamaContext } from 'llama.rn';
-import * as FileSystem from 'expo-file-system';
-
-// ─── CONFIG ───
-const PC_LAN_IP = '192.168.0.102';
-const getApiBase = (ip: string) => `http://${ip}:8000`;
+import * as FileSystem from 'expo-file-system/legacy';
 
 // ─── On-Device Models (small enough for phone RAM) ───
 const DEVICE_MODELS = [
@@ -59,24 +55,29 @@ const DEVICE_MODELS = [
   },
 ];
 
-// ─── Cloud Model Configs (work directly from the phone) ───
+// ─── Cloud Models (Gemini & Claude) ───
 const CLOUD_MODELS = [
-  { id: 'groq-llama3-8b', name: 'Llama 3 8B (Groq)', provider: 'groq', model: 'llama3-8b-8192', free: true },
-  { id: 'groq-llama3-70b', name: 'Llama 3 70B (Groq)', provider: 'groq', model: 'llama3-70b-8192', free: true },
-  { id: 'groq-mixtral', name: 'Mixtral 8x7B (Groq)', provider: 'groq', model: 'mixtral-8x7b-32768', free: true },
-  { id: 'groq-gemma2', name: 'Gemma 2 9B (Groq)', provider: 'groq', model: 'gemma2-9b-it', free: true },
-  { id: 'openai-gpt4o-mini', name: 'GPT-4o Mini (OpenAI)', provider: 'openai', model: 'gpt-4o-mini', free: false },
+  { id: 'gemini-flash', name: 'Gemini 2.0 Flash', provider: 'gemini', model: 'gemini-2.0-flash', description: 'Google\'s fastest model. Great for everyday tasks.' },
+  { id: 'gemini-pro', name: 'Gemini 1.5 Pro', provider: 'gemini', model: 'gemini-1.5-pro', description: 'Google\'s most capable model for complex reasoning.' },
+  { id: 'claude-sonnet', name: 'Claude 3.5 Sonnet', provider: 'claude', model: 'claude-3-5-sonnet-20241022', description: 'Anthropic\'s best all-around model.' },
+  { id: 'claude-haiku', name: 'Claude 3.5 Haiku', provider: 'claude', model: 'claude-3-5-haiku-20241022', description: 'Fast and affordable Claude model.' },
 ];
 
-const PROVIDER_ENDPOINTS: Record<string, string> = {
-  groq: 'https://api.groq.com/openai/v1/chat/completions',
-  openai: 'https://api.openai.com/v1/chat/completions',
+// ─── Provider API endpoints ───
+const PROVIDER_CONFIG: Record<string, { url: string; format: 'openai' | 'anthropic' }> = {
+  gemini: {
+    url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    format: 'openai',
+  },
+  claude: {
+    url: 'https://api.anthropic.com/v1/messages',
+    format: 'anthropic',
+  },
 };
 
 type Role = 'user' | 'assistant';
 type Message = { id: string; role: Role; content: string };
-type ModelStatus = { loaded: boolean; name?: string; size_gb?: number };
-type ChatMode = 'device' | 'cloud' | 'local';
+type ChatMode = 'device' | 'cloud';
 
 function AppContent() {
   const insets = useSafeAreaInsets();
@@ -86,10 +87,7 @@ function AppContent() {
   ]);
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [status, setStatus] = useState<ModelStatus>({ loaded: false });
-  const [catalog, setCatalog] = useState<any[]>([]);
   const [isModalVisible, setModalVisible] = useState(false);
-  const [isLoadingModel, setIsLoadingModel] = useState(false);
 
   // Chat mode
   const [chatMode, setChatMode] = useState<ChatMode>('device');
@@ -103,37 +101,15 @@ function AppContent() {
   const [isLoadingDevice, setIsLoadingDevice] = useState(false);
   const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
 
-  // Context Intelligence state (for PC mode)
-  const [useRag, setUseRag] = useState(false);
-  const [refineDepth, setRefineDepth] = useState(0);  // 0=off, 1=quick, 2=deep
-  const [contextStatus, setContextStatus] = useState('');
-
-  // PC connection state
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
-
   // UI States
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isSettingsOpen, setSettingsOpen] = useState(false);
-  const [conversations, setConversations] = useState<any[]>([]);
-  const [currentConvId, setCurrentConvId] = useState<string | null>(null);
 
-  // Settings
-  const [settings, setSettings] = useState({ openai_key: '', groq_key: '', together_key: '' });
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
-  const [backendIp, setBackendIp] = useState(PC_LAN_IP);
-  const [isConnected, setIsConnected] = useState(false);
-  const API_BASE = getApiBase(backendIp);
+  // Settings (Gemini + Claude keys)
+  const [settings, setSettings] = useState({ gemini_key: '', claude_key: '' });
 
   const flatListRef = useRef<FlatList>(null);
-  const modelsDir = `${FileSystem.documentDirectory}models/`;
-
-  // Hermes-compatible timeout fetch
-  const fetchWithTimeout = (url: string, ms = 3000): Promise<Response> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ms);
-    return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
-  };
+  const modelsDir = `${FileSystem.cacheDirectory}models/`;
 
   // ── Check which device models are already downloaded ──
   const checkDownloadedModels = async () => {
@@ -151,53 +127,9 @@ function AppContent() {
     }
   };
 
-  // ── Backend connectivity ──
-  const fetchStatus = () => {
-    fetchWithTimeout(`${API_BASE}/api/status`)
-      .then(res => res.json())
-      .then(data => { setStatus(data); setIsConnected(true); })
-      .catch(() => { setStatus({ loaded: false }); setIsConnected(false); });
-  };
-
-  const fetchCatalog = () => {
-    fetchWithTimeout(`${API_BASE}/api/models`)
-      .then(res => res.json())
-      .then(data => setCatalog(data.catalog || []))
-      .catch(() => { });
-  };
-
-  const fetchConversations = () => {
-    fetchWithTimeout(`${API_BASE}/api/conversations`)
-      .then(res => res.json())
-      .then(data => setConversations(data || []))
-      .catch(() => { });
-  };
-
-  const fetchSettings = () => {
-    fetchWithTimeout(`${API_BASE}/api/settings`)
-      .then(res => res.json())
-      .then(data => setSettings({
-        openai_key: data.openai_key || '',
-        groq_key: data.groq_key || '',
-        together_key: data.together_key || ''
-      }))
-      .catch(() => { });
-  };
-
   useEffect(() => {
     checkDownloadedModels();
-    fetchStatus();
-    fetchCatalog();
-    fetchConversations();
-    fetchSettings();
   }, []);
-
-  const reconnect = () => {
-    fetchStatus();
-    fetchCatalog();
-    fetchConversations();
-    fetchSettings();
-  };
 
   // ── Download model to phone storage ──
   const downloadDeviceModel = async (model: typeof DEVICE_MODELS[0]) => {
@@ -234,7 +166,6 @@ function AppContent() {
   const loadDeviceModel = async (model: typeof DEVICE_MODELS[0]) => {
     setIsLoadingDevice(true);
     try {
-      // Release previous context if any
       if (llamaContext) {
         await llamaContext.release();
         setLlamaContext(null);
@@ -274,75 +205,9 @@ function AppContent() {
     ]);
   };
 
-  const loadConversation = async (id: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/conversations/${id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(data.messages || []);
-        setCurrentConvId(data.id);
-        setSidebarOpen(false);
-      }
-    } catch (e) { console.error(e); }
-  };
-
   const createNewChat = () => {
     setMessages([{ id: '1', role: 'assistant', content: 'Hello! I am your Personal LLM. Ask me anything!' }]);
-    setCurrentConvId(null);
     setSidebarOpen(false);
-  };
-
-  const handleSaveSettings = async () => {
-    setIsSavingSettings(true);
-    try {
-      if (isConnected) {
-        await fetch(`${API_BASE}/api/settings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(settings)
-        });
-      }
-      setSettingsOpen(false);
-    } catch {
-      setSettingsOpen(false);
-    } finally {
-      setIsSavingSettings(false);
-    }
-  };
-
-  const handleLoadModel = async (filename: string) => {
-    setIsLoadingModel(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/models/load`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename }),
-      });
-      if (res.ok) { fetchStatus(); setModalVisible(false); }
-      else { Alert.alert('Error', 'Failed to load model.'); }
-    } catch { Alert.alert('Error', 'Network error.'); }
-    finally { setIsLoadingModel(false); }
-  };
-
-  const handleDownloadModel = async (catalogKey: string) => {
-    setIsDownloading(true);
-    setDownloadProgress(0);
-    try {
-      const res = await fetch(`${API_BASE}/api/models/download`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ catalog_key: catalogKey }),
-      });
-      if (!res.ok) { setIsDownloading(false); return; }
-      const interval = setInterval(async () => {
-        try {
-          const s = await fetch(`${API_BASE}/api/models/download/status`);
-          const d = await s.json();
-          setDownloadProgress(d.progress || 0);
-          if (d.done || d.error) { clearInterval(interval); setIsDownloading(false); fetchCatalog(); }
-        } catch { clearInterval(interval); setIsDownloading(false); }
-      }, 1500);
-    } catch { setIsDownloading(false); }
   };
 
   // ── On-Device Chat (runs entirely on phone) ──
@@ -364,7 +229,6 @@ function AppContent() {
         stop: ['<|im_end|>', '<|im_start|>'],
         temperature: 0.7,
       }, (data: any) => {
-        // Streaming token callback
         if (data.token) {
           setMessages(prev =>
             prev.map(msg =>
@@ -374,7 +238,6 @@ function AppContent() {
         }
       });
 
-      // If no streaming, set final result
       if (result && result.text) {
         setMessages(prev =>
           prev.map(msg =>
@@ -391,85 +254,76 @@ function AppContent() {
     }
   };
 
-  // ── Cloud Chat (direct from phone) ──
+  // ── Cloud Chat (Gemini / Claude — direct from phone) ──
   const handleCloudChat = async (userMessage: string, asstId: string) => {
     const provider = selectedCloudModel.provider;
-    const apiKey = provider === 'groq' ? settings.groq_key : settings.openai_key;
+    const apiKey = provider === 'gemini' ? settings.gemini_key : settings.claude_key;
     if (!apiKey || apiKey.includes('*')) {
       setMessages(prev =>
         prev.map(msg =>
-          msg.id === asstId ? { ...msg, content: `⚠️ No ${provider === 'groq' ? 'Groq' : 'OpenAI'} API key.\n\nGo to ⚙️ Settings and enter your key.\nGroq keys are FREE at console.groq.com` } : msg
+          msg.id === asstId ? {
+            ...msg, content: provider === 'gemini'
+              ? '⚠️ No Gemini API key.\n\nGo to ⚙️ Settings and enter your key.\nGet one free at aistudio.google.com'
+              : '⚠️ No Claude API key.\n\nGo to ⚙️ Settings and enter your key.\nGet one at console.anthropic.com'
+          } : msg
         )
       );
       return;
     }
-    const endpoint = PROVIDER_ENDPOINTS[provider];
+
+    const config = PROVIDER_CONFIG[provider];
     const chatHistory = messages.filter(m => m.content && !m.content.startsWith('⚠️')).map(m => ({ role: m.role, content: m.content }));
     chatHistory.push({ role: 'user', content: userMessage });
+
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: selectedCloudModel.model, messages: chatHistory.slice(-10), max_tokens: 1024, temperature: 0.7, stream: false }),
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ ${err?.error?.message || `API error ${response.status}`}` } : msg));
-        return;
+      if (config.format === 'openai') {
+        // Gemini — OpenAI-compatible endpoint
+        const response = await fetch(config.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: selectedCloudModel.model,
+            messages: chatHistory.slice(-10),
+            max_tokens: 1024,
+            temperature: 0.7,
+            stream: false,
+          }),
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ ${err?.error?.message || `Gemini API error ${response.status}`}` } : msg));
+          return;
+        }
+        const data = await response.json();
+        setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: data.choices?.[0]?.message?.content || 'No response' } : msg));
+
+      } else if (config.format === 'anthropic') {
+        // Claude — Anthropic Messages API
+        const response = await fetch(config.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: selectedCloudModel.model,
+            messages: chatHistory.slice(-10),
+            max_tokens: 1024,
+            stream: false,
+          }),
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ ${err?.error?.message || `Claude API error ${response.status}`}` } : msg));
+          return;
+        }
+        const data = await response.json();
+        const text = data.content?.[0]?.text || 'No response';
+        setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: text } : msg));
       }
-      const data = await response.json();
-      setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: data.choices?.[0]?.message?.content || 'No response' } : msg));
     } catch (e: any) {
       setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ Network error: ${e.message}` } : msg));
-    }
-  };
-
-  // ── Local Chat (via Desktop backend) ──
-  const handleLocalChat = async (userMessage: string, asstId: string) => {
-    try {
-      const response = await fetch(`${API_BASE}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userMessage,
-          max_tokens: 1024,
-          temperature: 0.7,
-          conversation_id: currentConvId,
-          use_rag: useRag,
-          refine_depth: refineDepth,
-        }),
-      });
-      if (!response.ok) throw new Error('Stream failed');
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      while (reader) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value);
-        for (const line of chunk.split('\n')) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'status') {
-                setContextStatus(data.message || '');
-              } else if (data.type === 'token') {
-                setContextStatus('');
-                setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: msg.content + data.content } : msg));
-              } else if (data.type === 'refine_start') {
-                setContextStatus('✨ Thinking deeper...');
-              } else if (data.type === 'refine_token') {
-                setContextStatus('');
-                setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: data.content } : msg));
-              } else if (data.type === 'done' || data.type === 'error') {
-                setContextStatus('');
-                break;
-              }
-            } catch { }
-          }
-        }
-      }
-    } catch {
-      setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: '⚠️ Cannot connect to Desktop. Check IP in Settings.' } : msg));
     }
   };
 
@@ -482,8 +336,7 @@ function AppContent() {
     setInput('');
     setIsGenerating(true);
     if (chatMode === 'device') await handleDeviceChat(userMessage, asstId);
-    else if (chatMode === 'cloud') await handleCloudChat(userMessage, asstId);
-    else await handleLocalChat(userMessage, asstId);
+    else await handleCloudChat(userMessage, asstId);
     setIsGenerating(false);
   };
 
@@ -507,11 +360,9 @@ function AppContent() {
 
   const modeLabel = chatMode === 'device'
     ? `📱 ${deviceModelName || 'No Model'}`
-    : chatMode === 'cloud'
-      ? `☁️ ${selectedCloudModel.name}`
-      : (isConnected ? `💻 ${status.name || 'PC'}` : '💻 Not Connected');
+    : `☁️ ${selectedCloudModel.name}`;
 
-  const modeColor = chatMode === 'device' ? '#f59e0b' : chatMode === 'cloud' ? '#22c55e' : '#6366f1';
+  const modeColor = chatMode === 'device' ? '#f59e0b' : '#22c55e';
 
   return (
     <View style={[styles.safe, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -537,16 +388,13 @@ function AppContent() {
           </TouchableOpacity>
         </View>
 
-        {/* Chat Mode Toggle */}
+        {/* Chat Mode Toggle — 2 modes only */}
         <View style={styles.modeBar}>
           <TouchableOpacity style={[styles.modeBtn, chatMode === 'device' && styles.modeBtnActiveDevice]} onPress={() => setChatMode('device')}>
             <Text style={[styles.modeBtnText, chatMode === 'device' && styles.modeBtnTextActive]}>📱 Device</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.modeBtn, chatMode === 'cloud' && styles.modeBtnActive]} onPress={() => setChatMode('cloud')}>
             <Text style={[styles.modeBtnText, chatMode === 'cloud' && styles.modeBtnTextActive]}>☁️ Cloud</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.modeBtn, chatMode === 'local' && styles.modeBtnActiveLocal]} onPress={() => setChatMode('local')}>
-            <Text style={[styles.modeBtnText, chatMode === 'local' && styles.modeBtnTextActive]}>💻 PC</Text>
           </TouchableOpacity>
         </View>
 
@@ -559,14 +407,7 @@ function AppContent() {
                 <TouchableOpacity onPress={() => setSidebarOpen(false)}><Text style={styles.closeModalText}>✕</Text></TouchableOpacity>
               </View>
               <TouchableOpacity style={styles.newChatBtn} onPress={createNewChat}><Text style={styles.newChatText}>+ New Chat</Text></TouchableOpacity>
-              <ScrollView style={styles.sidebarScroll}>
-                {conversations.map(conv => (
-                  <TouchableOpacity key={conv.id} style={[styles.sidebarItem, currentConvId === conv.id && styles.sidebarItemActive]} onPress={() => loadConversation(conv.id)}>
-                    <Text style={styles.sidebarItemTitle} numberOfLines={1}>{conv.title}</Text>
-                  </TouchableOpacity>
-                ))}
-                {conversations.length === 0 && <Text style={{ color: '#666', fontSize: 13, textAlign: 'center', marginTop: 30 }}>No chats yet</Text>}
-              </ScrollView>
+              <Text style={{ color: '#666', fontSize: 13, textAlign: 'center', marginTop: 30 }}>Chat history is kept locally on your device</Text>
             </View>
             <TouchableOpacity style={styles.sidebarCloseArea} onPress={() => setSidebarOpen(false)} />
           </View>
@@ -582,28 +423,21 @@ function AppContent() {
               </View>
               <ScrollView style={styles.catalogScroll}>
                 <Text style={styles.sectionTitle}>☁️ Cloud API Keys</Text>
-                <Text style={styles.settingsDesc}>Get a FREE Groq key at console.groq.com</Text>
+
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Groq API Key (FREE)</Text>
-                  <TextInput style={styles.settingsInput} value={settings.groq_key} onChangeText={t => setSettings(p => ({ ...p, groq_key: t }))} placeholder="gsk_..." placeholderTextColor="#555" autoCapitalize="none" />
+                  <Text style={styles.inputLabel}>🔷 Gemini API Key</Text>
+                  <Text style={styles.settingsDesc}>Get a free key at aistudio.google.com</Text>
+                  <TextInput style={styles.settingsInput} value={settings.gemini_key} onChangeText={t => setSettings(p => ({ ...p, gemini_key: t }))} placeholder="AIza..." placeholderTextColor="#555" autoCapitalize="none" />
                 </View>
+
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>OpenAI API Key</Text>
-                  <TextInput style={styles.settingsInput} value={settings.openai_key} onChangeText={t => setSettings(p => ({ ...p, openai_key: t }))} placeholder="sk-..." placeholderTextColor="#555" autoCapitalize="none" />
+                  <Text style={styles.inputLabel}>🟠 Claude API Key</Text>
+                  <Text style={styles.settingsDesc}>Get a key at console.anthropic.com</Text>
+                  <TextInput style={styles.settingsInput} value={settings.claude_key} onChangeText={t => setSettings(p => ({ ...p, claude_key: t }))} placeholder="sk-ant-..." placeholderTextColor="#555" autoCapitalize="none" />
                 </View>
-                <Text style={styles.sectionTitle}>💻 Local PC</Text>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Desktop PC IP</Text>
-                  <TextInput style={styles.settingsInput} value={backendIp} onChangeText={setBackendIp} placeholder="192.168.0.102" placeholderTextColor="#555" keyboardType="numeric" />
-                </View>
-                <TouchableOpacity style={styles.reconnectBtn} onPress={reconnect}>
-                  <Text style={styles.reconnectBtnText}>🔄 Test Connection</Text>
-                </TouchableOpacity>
-                <Text style={{ color: isConnected ? '#22c55e' : '#ef4444', fontSize: 13, textAlign: 'center', marginTop: 8 }}>
-                  {isConnected ? '✅ Connected' : '❌ Not Connected'}
-                </Text>
-                <TouchableOpacity style={[styles.saveBtn, isSavingSettings && styles.loadBtnDisabled]} onPress={handleSaveSettings} disabled={isSavingSettings}>
-                  <Text style={styles.saveBtnText}>{isSavingSettings ? 'Saving...' : 'Save Settings'}</Text>
+
+                <TouchableOpacity style={styles.saveBtn} onPress={() => setSettingsOpen(false)}>
+                  <Text style={styles.saveBtnText}>Save & Close</Text>
                 </TouchableOpacity>
               </ScrollView>
             </View>
@@ -621,16 +455,16 @@ function AppContent() {
               <ScrollView style={styles.catalogScroll}>
 
                 {/* First-use guide */}
-                {!llamaContext && !settings.groq_key && (
+                {!llamaContext && !settings.gemini_key && !settings.claude_key && (
                   <View style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 14, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#f59e0b' }}>
                     <Text style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: 14, marginBottom: 6 }}>👋 Getting Started</Text>
-                    <Text style={{ color: '#94a3b8', fontSize: 13, lineHeight: 20 }}>{'Choose how to chat:\n\n📱 Device — Download a model (229 MB+) to run offline on your phone\n\n☁️ Cloud — Get a FREE Groq API key at console.groq.com for instant access'}</Text>
+                    <Text style={{ color: '#94a3b8', fontSize: 13, lineHeight: 20 }}>{'Choose how to chat:\n\n📱 Device — Download a model (229 MB+) to run offline on your phone\n\n☁️ Cloud — Use Gemini (free) or Claude API for powerful AI'}</Text>
                   </View>
                 )}
 
                 {/* On-Device Models */}
                 <Text style={styles.sectionTitle}>📱 On-Device Models (runs on your phone)</Text>
-                <Text style={styles.settingsDesc}>Download once, works completely offline. No internet or PC needed!</Text>
+                <Text style={styles.settingsDesc}>Download once, works completely offline. No internet needed!</Text>
                 {DEVICE_MODELS.map(model => {
                   const isOnPhone = downloadedModels.includes(model.filename);
                   const isActive = llamaContext && deviceModelName === model.name;
@@ -677,20 +511,21 @@ function AppContent() {
 
                 {/* Cloud Models */}
                 <Text style={styles.sectionTitle}>☁️ Cloud Models (via API)</Text>
-                <Text style={styles.settingsDesc}>Fast inference. Groq models are FREE! Get a key at console.groq.com</Text>
+                <Text style={styles.settingsDesc}>Powerful AI models. Gemini offers free usage. Claude requires a paid key.</Text>
                 {CLOUD_MODELS.map(model => {
-                  const needsKey = model.provider === 'groq' ? !settings.groq_key : !settings.openai_key;
+                  const needsKey = model.provider === 'gemini' ? !settings.gemini_key : !settings.claude_key;
+                  const isSelected = selectedCloudModel.id === model.id && chatMode === 'cloud';
                   return (
                     <TouchableOpacity
                       key={model.id}
-                      style={[styles.modelCardAvailable, selectedCloudModel.id === model.id && chatMode === 'cloud' && { borderColor: '#22c55e', borderWidth: 2 }]}
+                      style={[styles.modelCardAvailable, isSelected && { borderColor: '#22c55e', borderWidth: 2 }]}
                       onPress={() => {
                         if (needsKey) {
                           Alert.alert(
                             'API Key Required',
-                            model.provider === 'groq'
-                              ? 'You need a free Groq API key.\n\n1. Go to console.groq.com\n2. Sign up (free)\n3. Create an API key\n4. Paste it in Settings → Groq API Key'
-                              : 'You need an OpenAI API key. Enter it in Settings.',
+                            model.provider === 'gemini'
+                              ? 'You need a Gemini API key.\n\n1. Go to aistudio.google.com\n2. Click "Get API key"\n3. Copy and paste it in Settings'
+                              : 'You need a Claude API key.\n\n1. Go to console.anthropic.com\n2. Create an API key\n3. Paste it in Settings',
                             [{ text: 'Open Settings', onPress: () => { setModalVisible(false); setSettingsOpen(true); } }, { text: 'Cancel' }]
                           );
                           return;
@@ -702,35 +537,16 @@ function AppContent() {
                         <Text style={styles.modelName}>{model.name}</Text>
                         <View style={{ flexDirection: 'row', gap: 6 }}>
                           {needsKey && <View style={{ backgroundColor: '#7f1d1d', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ color: '#fca5a5', fontSize: 10, fontWeight: 'bold' }}>KEY NEEDED</Text></View>}
-                          {model.free && <View style={styles.freeBadge}><Text style={styles.freeBadgeText}>FREE</Text></View>}
+                          {model.provider === 'gemini' && <View style={styles.freeBadge}><Text style={styles.freeBadgeText}>FREE TIER</Text></View>}
                         </View>
                       </View>
-                      <Text style={styles.modelDesc}>{model.provider === 'groq' ? 'Ultra-fast via Groq' : 'OpenAI cloud'}</Text>
+                      <Text style={styles.modelDesc}>{model.description}</Text>
+                      <Text style={{ color: model.provider === 'gemini' ? '#4285F4' : '#D97706', fontSize: 11, fontWeight: 'bold', marginTop: 2 }}>
+                        {model.provider === 'gemini' ? '🔷 Google Gemini' : '🟠 Anthropic Claude'}
+                      </Text>
                     </TouchableOpacity>
                   );
                 })}
-
-                {/* PC Models */}
-                {isConnected && (
-                  <>
-                    <Text style={styles.sectionTitle}>💻 Local PC Models</Text>
-                    {catalog.filter(c => c.is_downloaded).map(model => (
-                      <TouchableOpacity key={model.key} style={styles.modelCardAvailable} onPress={() => { handleLoadModel(model.filename); setChatMode('local'); }}>
-                        <Text style={styles.modelName}>{model.name}</Text>
-                        <Text style={styles.modelDesc}>{model.size_gb} GB • Local</Text>
-                      </TouchableOpacity>
-                    ))}
-                    {catalog.filter(c => !c.is_downloaded).map(model => (
-                      <View key={model.key} style={styles.modelCardAvailable}>
-                        <Text style={styles.modelName}>{model.name}</Text>
-                        <Text style={styles.modelMeta}>{model.size_gb} GB</Text>
-                        <TouchableOpacity style={[styles.downloadBtn, isDownloading && styles.loadBtnDisabled]} onPress={() => handleDownloadModel(model.key)} disabled={isDownloading}>
-                          <Text style={styles.downloadBtnText}>{isDownloading ? `${(downloadProgress * 100).toFixed(0)}%` : `⬇ Download to PC`}</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </>
-                )}
               </ScrollView>
             </View>
           </View>
@@ -745,34 +561,6 @@ function AppContent() {
           contentContainerStyle={styles.chatList}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
-
-        {/* Context Intelligence Toolbar (PC mode only) */}
-        {chatMode === 'local' && isConnected && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, gap: 8 }}>
-            <TouchableOpacity
-              style={[styles.contextToggle, useRag && styles.contextToggleActive]}
-              onPress={() => setUseRag(p => !p)}
-            >
-              <Text style={[styles.contextToggleText, useRag && styles.contextToggleTextActive]}>
-                🔍 RAG {useRag ? 'ON' : 'OFF'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.contextToggle, refineDepth > 0 && styles.contextToggleActiveAmber]}
-              onPress={() => setRefineDepth(p => p === 0 ? 1 : p === 1 ? 2 : 0)}
-            >
-              <Text style={[styles.contextToggleText, refineDepth > 0 && styles.contextToggleTextActiveAmber]}>
-                ✨ {refineDepth === 0 ? 'Deep Think' : `Refine ×${refineDepth}`}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
-        {/* Context Status */}
-        {contextStatus !== '' && (
-          <View style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
-            <Text style={{ color: '#818cf8', fontSize: 12 }}>{contextStatus}</Text>
-          </View>
-        )}
 
         {/* Input */}
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -824,7 +612,6 @@ const styles = StyleSheet.create({
   modeBtn: { flex: 1, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   modeBtnActive: { backgroundColor: 'rgba(34,197,94,0.15)', borderColor: '#22c55e' },
   modeBtnActiveDevice: { backgroundColor: 'rgba(245,158,11,0.15)', borderColor: '#f59e0b' },
-  modeBtnActiveLocal: { backgroundColor: 'rgba(99,102,241,0.15)', borderColor: '#6366f1' },
   modeBtnText: { color: '#888', fontSize: 12, fontWeight: '600' },
   modeBtnTextActive: { color: '#fff' },
   chatList: { paddingHorizontal: 16, paddingVertical: 12 },
@@ -846,15 +633,6 @@ const styles = StyleSheet.create({
   sendBtn: { width: 42, height: 42, borderRadius: 14, backgroundColor: '#4f46e5', alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   sendBtnDisabled: { backgroundColor: '#333' },
   sendBtnText: { color: '#fff', fontSize: 16 },
-
-  // Context Toggles
-  contextToggle: { backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  contextToggleActive: { backgroundColor: 'rgba(79,70,229,0.2)', borderColor: 'rgba(79,70,229,0.4)' },
-  contextToggleActiveAmber: { backgroundColor: 'rgba(245,158,11,0.2)', borderColor: 'rgba(245,158,11,0.4)' },
-  contextToggleText: { color: '#9ca3af', fontSize: 12 },
-  contextToggleTextActive: { color: '#818cf8', fontWeight: 'bold' },
-  contextToggleTextActiveAmber: { color: '#fbbf24', fontWeight: 'bold' },
-  sendBtnText: { color: '#fff', fontSize: 16 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#0B0E14', borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '88%', padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)', paddingBottom: 12 },
@@ -866,7 +644,6 @@ const styles = StyleSheet.create({
   modelCardAvailable: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: 'transparent' },
   modelName: { color: '#fff', fontSize: 15, fontWeight: 'bold', marginBottom: 2 },
   modelDesc: { color: '#aaa', fontSize: 12, lineHeight: 16, marginBottom: 4 },
-  modelMeta: { color: '#6366f1', fontSize: 11, fontWeight: 'bold', marginBottom: 6 },
   sizeBadge: { color: '#f59e0b', fontSize: 11, fontWeight: 'bold', backgroundColor: 'rgba(245,158,11,0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
   freeBadge: { backgroundColor: '#22c55e', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
   freeBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
@@ -879,8 +656,6 @@ const styles = StyleSheet.create({
   deleteBtnText: { fontSize: 16 },
   progressBarBg: { height: 5, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 3, marginTop: 6, overflow: 'hidden' as const },
   progressBarFill: { height: 5, backgroundColor: '#22c55e', borderRadius: 3 },
-  reconnectBtn: { backgroundColor: '#4f46e5', paddingVertical: 10, paddingHorizontal: 24, borderRadius: 10, alignItems: 'center', marginTop: 12 },
-  reconnectBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   sidebarOverlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.5)' },
   sidebarContent: { width: '80%', maxWidth: 320, backgroundColor: '#0B0E14', height: '100%', padding: 20, borderRightWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   sidebarCloseArea: { flex: 1 },
@@ -888,13 +663,9 @@ const styles = StyleSheet.create({
   sidebarTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   newChatBtn: { backgroundColor: '#4f46e5', padding: 12, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
   newChatText: { color: '#fff', fontWeight: 'bold' },
-  sidebarScroll: { flex: 1 },
-  sidebarItem: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
-  sidebarItemActive: { backgroundColor: 'rgba(79,70,229,0.1)', paddingHorizontal: 12, borderRadius: 8, borderBottomWidth: 0 },
-  sidebarItemTitle: { color: '#fff', fontSize: 14, fontWeight: '500' },
-  settingsDesc: { color: '#aaa', fontSize: 12, marginBottom: 14, lineHeight: 18 },
+  settingsDesc: { color: '#aaa', fontSize: 12, marginBottom: 8, lineHeight: 18 },
   inputGroup: { marginBottom: 14 },
-  inputLabel: { color: '#ccc', fontSize: 13, marginBottom: 6, fontWeight: '500' },
+  inputLabel: { color: '#ccc', fontSize: 13, marginBottom: 4, fontWeight: '500' },
   settingsInput: { backgroundColor: '#151923', color: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   saveBtn: { backgroundColor: '#22c55e', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginTop: 20, marginBottom: 40 },
   saveBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },

@@ -119,6 +119,19 @@ class ModelManager:
         print(f"   Size: ~{entry['size_gb']} GB")
         print(f"   This is a one-time download. After this, everything is offline.\n")
 
+        try:
+            downloaded = hf_hub_download(
+                repo_id=entry["repo_id"],
+                filename=entry["filename"],
+                local_dir=str(self.models_dir),
+                local_dir_use_symlinks=False,
+            )
+            print(f"✅ Downloaded: {entry['filename']}")
+            return str(dest)
+        except Exception as e:
+            print(f"❌ Download failed: {e}")
+            return None
+
     def download_model_stream(
         self,
         catalog_key: str,
@@ -160,7 +173,7 @@ class ModelManager:
             if progress_callback:
                 progress_callback(0, f"Connecting to HuggingFace...")
 
-            response = requests.get(url, stream=True, timeout=10)
+            response = requests.get(url, stream=True, timeout=(15, 120))  # (connect, read) timeouts
             response.raise_for_status()
 
             total_size_str = response.headers.get('content-length')

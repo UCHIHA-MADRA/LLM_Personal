@@ -15,8 +15,9 @@ const path = require("path");
 const http = require("http");
 const fs = require("fs");
 
-const API_PORT = 8000;
-const API_URL = `http://127.0.0.1:${API_PORT}`;
+const DEFAULT_API_PORT = 8000;
+let apiPort = DEFAULT_API_PORT;
+let API_URL = `http://127.0.0.1:${apiPort}`;
 const IS_DEV = !app.isPackaged;
 
 const serve = require("electron-serve").default || require("electron-serve");
@@ -29,14 +30,36 @@ let splashWindow = null;
 // ---- Find Python ----
 function findPython() {
   if (!IS_DEV) {
-    // Check for bundled embedded Python first
-    const embedded = path.join(process.resourcesPath, "python-embed", "python.exe");
-    if (fs.existsSync(embedded)) {
-      console.log("Found bundled Python:", embedded);
-      return embedded;
+    // In production, the bundled python-embed in resources/ is corrupted by
+    // Electron's code signing. Copy it to %LOCALAPPDATA% on first run and use it from there.
+    const appData = process.env.LOCALAPPDATA || path.join(require("os").homedir(), "AppData", "Local");
+    const localPythonDir = path.join(appData, "PersonalLLM", "python-embed");
+    const localPython = path.join(localPythonDir, "python.exe");
+
+    if (fs.existsSync(localPython)) {
+      console.log("Found local Python:", localPython);
+      return localPython;
+    }
+
+    // Copy bundled python-embed to local AppData (first run only)
+    const bundledPython = path.join(process.resourcesPath, "python-embed");
+    if (fs.existsSync(path.join(bundledPython, "python.exe"))) {
+      console.log("First run: Copying Python to", localPythonDir);
+      if (splashWindow) {
+        splashWindow.webContents.executeJavaScript(
+          `document.getElementById('status').innerText = 'First run setup: Extracting Python...'`
+        ).catch(() => { });
+      }
+      try {
+        copyDirSync(bundledPython, localPythonDir);
+        console.log("Python copied successfully to", localPythonDir);
+        return localPython;
+      } catch (err) {
+        console.error("Failed to copy Python:", err.message);
+      }
     }
   }
-  // Try system Python
+  // Try system Python as fallback
   for (const cmd of ["python", "python3", "py"]) {
     try {
       const ver = execSync(`${cmd} --version`, { encoding: "utf-8", timeout: 5000, windowsHide: true }).trim();
@@ -45,6 +68,20 @@ function findPython() {
     } catch { }
   }
   return null;
+}
+
+// ---- Recursive directory copy ----
+function copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
 }
 
 // ---- Get the project root for backend files ----
@@ -63,13 +100,14 @@ function canImport(pythonExe, mod) {
 
 // ---- First-run setup: install missing deps ----
 function installDependencies(pythonExe) {
-  const required = ["fastapi", "uvicorn", "llama_cpp", "huggingface_hub", "pydantic"];
+  const required = ["fastapi", "uvicorn", "llama_cpp", "huggingface_hub", "pydantic", "multipart"];
   const pipMap = {
     fastapi: "fastapi",
     uvicorn: "uvicorn[standard]",
     llama_cpp: "llama-cpp-python",
     huggingface_hub: "huggingface-hub",
-    pydantic: "pydantic"
+    pydantic: "pydantic",
+    multipart: "python-multipart"
   };
 
   const missing = required.filter(mod => !canImport(pythonExe, mod));
@@ -99,6 +137,13 @@ function installDependencies(pythonExe) {
     return true;
   } catch (err) {
     console.error("Failed to install dependencies:", err.message);
+    dialog.showMessageBoxSync({
+      type: "error",
+      title: "Dependency Install Failed",
+      message: "Could not install required Python packages.",
+      detail: `Ensure you have an internet connection and 'pip' is installed.\n\nError: ${err.message}`,
+      buttons: ["OK"]
+    });
     return false;
   }
 }
@@ -159,6 +204,8 @@ function startPythonBackend(pythonExe) {
       ...process.env,
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONIOENCODING: "utf-8",
+      RESOURCES_PATH: process.resourcesPath || "",
+      ELECTRON_MODE: "1",  // Tells api.py to bind to 127.0.0.1 (no firewall needed)
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -174,12 +221,30 @@ function startPythonBackend(pythonExe) {
 }
 
 // ---- Wait for backend API ----
-function waitForAPI(maxRetries = 60) {
+function waitForAPI(maxRetries = 120) {
+  // Read the port file that Python writes after finding an available port
+  const portFile = path.join(require("os").homedir(), ".personal_llm_port");
+
   return new Promise((resolve, reject) => {
     let n = 0;
     const iv = setInterval(() => {
       n++;
-      if (splashWindow && n % 4 === 0) {
+
+      // Check if Python has written its port file
+      if (n % 2 === 0) {
+        try {
+          if (fs.existsSync(portFile)) {
+            const port = parseInt(fs.readFileSync(portFile, "utf-8").trim(), 10);
+            if (port && port !== apiPort) {
+              apiPort = port;
+              API_URL = `http://127.0.0.1:${apiPort}`;
+              console.log(`[Main] Detected backend on port ${apiPort}`);
+            }
+          }
+        } catch { }
+      }
+
+      if (splashWindow && n % 5 === 0) {
         splashWindow.webContents.executeJavaScript(
           `document.getElementById('status').innerText = 'Starting AI engine... (${n}s)'`
         ).catch(() => { });
@@ -189,7 +254,7 @@ function waitForAPI(maxRetries = 60) {
       });
       req.on("error", () => { if (n >= maxRetries) { clearInterval(iv); reject(new Error("Timeout")); } });
       req.end();
-    }, 500);
+    }, 1000);
   });
 }
 
@@ -240,18 +305,97 @@ app.whenReady().then(async () => {
       `document.getElementById('status').innerText = 'Starting AI engine...'`
     ).catch(() => { });
   }
+
+  // Capture Python stderr for diagnostics
+  let pythonErrors = [];
   startPythonBackend(pythonExe);
+  if (pythonProcess) {
+    pythonProcess.stderr.removeAllListeners("data");
+    pythonProcess.stderr.on("data", (d) => {
+      const m = d.toString().trim();
+      pythonErrors.push(m);
+      if (m.includes("ERROR") || m.includes("Traceback")) console.error("[Py ERR]", m);
+      else console.log("[Py]", m);
+    });
+  }
 
   try {
     await waitForAPI();
     console.log("API is ready!");
+
+    // Close splash and show main window
+    if (splashWindow) { splashWindow.close(); splashWindow = null; }
+    createWindow();
   } catch (err) {
     console.error("Backend did not start:", err.message);
-  }
 
-  // Close splash and show main window
-  if (splashWindow) { splashWindow.close(); splashWindow = null; }
-  createWindow();
+    // Show diagnostic error to user instead of hanging
+    if (splashWindow) { splashWindow.close(); splashWindow = null; }
+    const errorLog = pythonErrors.join("\n");
+    const pythonAlive = pythonProcess !== null;
+
+    // Check for missing C++ Redistributable (classic WinError 1114 / 126 from llama.dll)
+    if (errorLog.includes("WinError 1114") || errorLog.includes("WinError 126") || errorLog.includes("VCRUNTIME140.dll")) {
+      const redistPath = path.join(process.resourcesPath, "vc_redist.x64.exe");
+
+      if (fs.existsSync(redistPath)) {
+        dialog.showMessageBoxSync({
+          type: "warning",
+          title: "Installing Required Components",
+          message: "Your PC is missing the Microsoft Visual C++ Redistributable.",
+          detail: "The AI engine requires this official Microsoft component.\n\nClick OK to install it automatically. Administrator permission may be required.",
+          buttons: ["OK"],
+        });
+
+        try {
+          // Run the included redist installer with admin elevation (triggers UAC prompt)
+          execSync(`powershell -Command "Start-Process -FilePath '${redistPath}' -ArgumentList '/install','/quiet','/norestart' -Verb RunAs -Wait"`, {
+            timeout: 120000,
+            windowsHide: true,
+          });
+
+          dialog.showMessageBoxSync({
+            type: "info",
+            title: "Installation Complete",
+            message: "Success! The required components have been installed.",
+            detail: "Personal LLM will now restart.",
+            buttons: ["Restart"]
+          });
+
+          app.relaunch();
+        } catch (installErr) {
+          dialog.showMessageBoxSync({
+            type: "error",
+            title: "Installation Failed",
+            message: "Failed to automatically install the C++ Redistributable.",
+            detail: `Please run it manually from:\n${redistPath}\n\nError: ${installErr.message}`,
+            buttons: ["Quit"]
+          });
+        }
+      } else {
+        // Fallback if the redist isn't bundled for some reason
+        const r = dialog.showMessageBoxSync({
+          type: "error",
+          title: "Missing System Components",
+          message: "Your PC is missing the Microsoft Visual C++ Redistributable.",
+          detail: "The AI engine (llama-cpp-python) requires this official Microsoft component to run on Windows.\n\nPlease download and install 'vc_redist.x64.exe', then restart Personal LLM.",
+          buttons: ["Download vc_redist", "Quit"],
+        });
+        if (r === 0) shell.openExternal("https://aka.ms/vs/17/release/vc_redist.x64.exe");
+      }
+    } else {
+      // Generic crash
+      dialog.showMessageBoxSync({
+        type: "error",
+        title: "Backend Failed to Start",
+        message: "The AI engine could not start.",
+        detail: `Python: ${pythonExe}\nProcess alive: ${pythonAlive}\n\n--- Last Python Output ---\n${errorLog.slice(-1500) || "(no output captured)"}\n\nTry:\n1. Run the installer as Administrator\n2. Check if antivirus is blocking python.exe`,
+        buttons: ["Quit"],
+      });
+    }
+
+    app.quit();
+  }
 
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

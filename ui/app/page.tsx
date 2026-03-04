@@ -4,7 +4,8 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Bot, Send, User, Menu, Settings, X, Trash2, Key, Cloud,
-  Cpu, Zap, ChevronDown, Package, PlusCircle, AlertCircle, CheckCircle2, Loader2
+  Cpu, Zap, ChevronDown, Package, PlusCircle, AlertCircle, CheckCircle2, Loader2,
+  Paperclip, Brain, Search, Sparkles
 } from "lucide-react"
 import { cn } from "./lib/utils"
 
@@ -28,6 +29,38 @@ type CatalogEntry = {
 }
 type Toast = { id: string; message: string; type: "success" | "error" | "info" }
 type DownloadStatus = { active: boolean; key: string; progress: number; message: string; done: boolean; error: string | null }
+
+
+// ─── API CONFIG ───
+const PORTS_TO_TRY = [8000, 8001, 8002, 8003, 8004];
+let API_BASE = 'http://127.0.0.1:8000';
+
+const getApiBase = () => {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (!host || host === '-' || host === 'localhost' || window.location.protocol === 'file:' || window.location.protocol === 'app:') {
+      return 'http://127.0.0.1:8000'; // Will be overridden by discoverPort()
+    }
+    return `http://${host}:${window.location.port || 8000}`;
+  }
+  return 'http://127.0.0.1:8000';
+};
+API_BASE = getApiBase();
+
+// Auto-discover the backend port (tries 8000-8004)
+const discoverPort = async () => {
+  for (const port of PORTS_TO_TRY) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/status`, { signal: AbortSignal.timeout(500) });
+      if (res.ok) {
+        API_BASE = `http://127.0.0.1:${port}`;
+        console.log(`[UI] Backend found on port ${port}`);
+        return port;
+      }
+    } catch { /* try next */ }
+  }
+  return 8000; // fallback
+};
 
 // ─── TOAST COMPONENT ───
 function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
@@ -77,8 +110,15 @@ export default function PersonalLLMApp() {
   const [backendConnected, setBackendConnected] = useState(false)
 
   // API Key states
-  const [apiKeys, setApiKeys] = useState({ openai_key: "", groq_key: "", together_key: "" })
+  const [apiKeys, setApiKeys] = useState({ gemini_key: "", claude_key: "" })
   const [savedKeysMasked, setSavedKeysMasked] = useState<Record<string, string>>({})
+
+  // Context Intelligence states
+  const [useRag, setUseRag] = useState(false)
+  const [refineDepth, setRefineDepth] = useState(0)  // 0=off, 1=quick, 2=deep
+  const [contextStatus, setContextStatus] = useState("")  // status messages during generation
+  const [contextSources, setContextSources] = useState<string[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Toast helpers
   const addToast = useCallback((message: string, type: Toast["type"] = "info") => {
@@ -93,42 +133,45 @@ export default function PersonalLLMApp() {
 
   // ─── Data Fetching ───
   const fetchStatus = useCallback(() => {
-    fetch("http://localhost:8000/api/status")
+    fetch(`${API_BASE}/api/status`)
       .then(res => res.json())
       .then(data => { setStatus(data); setBackendConnected(true) })
       .catch(() => { setBackendConnected(false) })
   }, [])
 
   const fetchData = useCallback(() => {
-    fetch("http://localhost:8000/api/conversations")
+    fetch(`${API_BASE}/api/conversations`)
       .then(res => res.json())
       .then(data => setConversations(data.sort((a: ConversationItem, b: ConversationItem) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())))
       .catch(() => { })
 
-    fetch("http://localhost:8000/api/models")
+    fetch(`${API_BASE}/api/models`)
       .then(res => res.json())
       .then(data => setCatalog(data.catalog))
       .catch(() => { })
   }, [])
 
   const fetchSettings = useCallback(() => {
-    fetch("http://localhost:8000/api/settings")
+    fetch(`${API_BASE}/api/settings`)
       .then(res => res.json())
       .then(data => setSavedKeysMasked(data))
       .catch(() => { })
   }, [])
 
   useEffect(() => {
-    fetchStatus()
-    fetchData()
-    fetchSettings()
+    // Discover the backend port first (in case 8000 was blocked)
+    discoverPort().then(() => {
+      fetchStatus()
+      fetchData()
+      fetchSettings()
+    })
   }, [fetchStatus, fetchData, fetchSettings])
 
   // Auto-retry backend connection every 3s when disconnected
   useEffect(() => {
     if (backendConnected) return
     const interval = setInterval(() => {
-      fetch("http://localhost:8000/api/status")
+      fetch(`${API_BASE}/api/status`)
         .then(res => res.json())
         .then(data => {
           setStatus(data)
@@ -151,7 +194,7 @@ export default function PersonalLLMApp() {
   useEffect(() => {
     if (!downloadStatus?.active) return
     const interval = setInterval(() => {
-      fetch("http://localhost:8000/api/models/download/status")
+      fetch(`${API_BASE}/api/models/download/status`)
         .then(res => res.json())
         .then((data: DownloadStatus) => {
           setDownloadStatus(data)
@@ -174,7 +217,7 @@ export default function PersonalLLMApp() {
   // ─── Conversation Actions ───
   const loadConversation = async (id: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/conversations/${id}`)
+      const res = await fetch(`${API_BASE}/api/conversations/${id}`)
       if (res.ok) {
         const data = await res.json()
         setCurrentConversationId(data.id)
@@ -187,7 +230,7 @@ export default function PersonalLLMApp() {
   const deleteConversation = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      await fetch(`http://localhost:8000/api/conversations/${id}`, { method: "DELETE" })
+      await fetch(`${API_BASE}/api/conversations/${id}`, { method: "DELETE" })
       if (currentConversationId === id) newConversation()
       fetchData()
       addToast("Conversation deleted", "success")
@@ -218,19 +261,24 @@ export default function PersonalLLMApp() {
     setMessages(prev => [...prev, userMsg])
     setInput("")
     setIsGenerating(true)
+    setContextStatus("")
+    setContextSources([])
 
     try {
       const asstId = (Date.now() + 1).toString()
       setMessages(prev => [...prev, { id: asstId, role: "assistant", content: "" }])
 
-      const response = await fetch("http://localhost:8000/api/chat", {
+      const response = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: input,
           conversation_id: currentConversationId,
           max_tokens: 1024,
-          temperature: 0.7
+          temperature: 0.7,
+          use_rag: useRag,
+          refine_depth: refineDepth,
+          use_cot: false
         })
       })
 
@@ -241,26 +289,43 @@ export default function PersonalLLMApp() {
 
       const reader = response.body?.getReader()
       const decoder = new TextDecoder()
+      let sseBuffer = ''
 
       while (reader) {
         const { value, done } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n')
+        sseBuffer += decoder.decode(value, { stream: true })
+        const lines = sseBuffer.split('\n')
+        // Keep the last (potentially incomplete) line in the buffer
+        sseBuffer = lines.pop() || ''
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6))
               if (data.type === 'init') {
                 setCurrentConversationId(data.conversation_id)
+              } else if (data.type === 'status') {
+                setContextStatus(data.message || "")
+              } else if (data.type === 'context') {
+                setContextSources(data.sources || [])
               } else if (data.type === 'token') {
+                setContextStatus("")
                 setMessages(prev => prev.map(msg =>
                   msg.id === asstId ? { ...msg, content: msg.content + data.content } : msg
                 ))
+              } else if (data.type === 'refine_start') {
+                setContextStatus("✨ Thinking deeper...")
+              } else if (data.type === 'refine_token') {
+                setContextStatus("")
+                setMessages(prev => prev.map(msg =>
+                  msg.id === asstId ? { ...msg, content: data.content } : msg
+                ))
               } else if (data.type === 'error') {
-                addToast(data.content || "Generation error", "error")
+                addToast(data.content || data.message || "Generation error", "error")
                 break
               } else if (data.type === 'done') {
+                setContextStatus("")
+                if (data.refined) addToast("Response refined for better quality", "success")
                 break
               }
             } catch { }
@@ -272,14 +337,41 @@ export default function PersonalLLMApp() {
       addToast(e instanceof Error ? e.message : "Chat failed", "error")
     } finally {
       setIsGenerating(false)
+      setContextStatus("")
     }
+  }
+
+  // ─── File Upload ───
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      addToast(`Uploading ${file.name}...`, "info")
+      const res = await fetch(`${API_BASE}/api/knowledge/upload`, {
+        method: "POST",
+        body: formData
+      })
+      if (res.ok) {
+        const data = await res.json()
+        addToast(`✅ ${data.message}`, "success")
+        setUseRag(true)  // auto-enable RAG after upload
+      } else {
+        const err = await res.json().catch(() => ({ detail: "Upload failed" }))
+        addToast(err.detail || "Upload failed", "error")
+      }
+    } catch {
+      addToast("Network error uploading file", "error")
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   // ─── Model Load ───
   const handleLoadModel = async (filename: string) => {
     setIsLoadingModel(true)
     try {
-      const res = await fetch("http://localhost:8000/api/models/load", {
+      const res = await fetch(`${API_BASE}/api/models/load`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename })
@@ -298,7 +390,7 @@ export default function PersonalLLMApp() {
   // ─── Model Download ───
   const handleDownloadModel = async (key: string) => {
     try {
-      const res = await fetch("http://localhost:8000/api/models/download", {
+      const res = await fetch(`${API_BASE}/api/models/download`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ catalog_key: key })
@@ -317,18 +409,17 @@ export default function PersonalLLMApp() {
   const handleSaveKeys = async () => {
     try {
       const body: Record<string, string> = {}
-      if (apiKeys.openai_key) body.openai_key = apiKeys.openai_key
-      if (apiKeys.groq_key) body.groq_key = apiKeys.groq_key
-      if (apiKeys.together_key) body.together_key = apiKeys.together_key
+      if (apiKeys.gemini_key) body.gemini_key = apiKeys.gemini_key
+      if (apiKeys.claude_key) body.claude_key = apiKeys.claude_key
 
-      const res = await fetch("http://localhost:8000/api/settings", {
+      const res = await fetch(`${API_BASE}/api/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       })
       if (res.ok) {
         addToast("API keys saved!", "success")
-        setApiKeys({ openai_key: "", groq_key: "", together_key: "" })
+        setApiKeys({ gemini_key: "", claude_key: "" })
         fetchSettings()
       } else {
         addToast("Failed to save keys", "error")
@@ -399,16 +490,7 @@ export default function PersonalLLMApp() {
                     <div>
                       <h4 className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4"><Zap className="w-4 h-4" /> Available To Download</h4>
                       <div className="space-y-3">
-                        {(catalog.filter(c => !c.is_downloaded).length > 0
-                          ? catalog.filter(c => !c.is_downloaded)
-                          : [
-                            { key: "qwen3-1.7b", name: "Qwen3 1.7B (Q4_K_M)", description: "Alibaba's tiny Qwen3. Runs on anything. Great starter model. Apache 2.0.", size_gb: 1.2, filename: "Qwen_Qwen3-1.7B-Q4_K_M.gguf", is_downloaded: false, fit_info: { fit_level: "Perfect" } },
-                            { key: "mistral-7b", name: "Mistral 7B Instruct v0.3", description: "Mistral's flagship 7B. Exceptional quality-to-size ratio. Apache 2.0.", size_gb: 4.4, filename: "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf", is_downloaded: false, fit_info: { fit_level: "Optimal" } },
-                            { key: "deepseek-r1-7b", name: "DeepSeek-R1 Qwen Distill 7B", description: "DeepSeek's reasoning model distilled to 7B. Chain-of-thought specialist. MIT license.", size_gb: 4.7, filename: "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf", is_downloaded: false, fit_info: { fit_level: "Optimal" } },
-                            { key: "qwen3-8b", name: "Qwen3 8B (Q4_K_M)", description: "Alibaba's Qwen3 8B. Strong multilingual + reasoning. Apache 2.0.", size_gb: 5.0, filename: "Qwen_Qwen3-8B-Q4_K_M.gguf", is_downloaded: false, fit_info: { fit_level: "Good" } },
-                            { key: "deepseek-coder-6.7b", name: "DeepSeek Coder 6.7B Instruct", description: "DeepSeek's dedicated code model. Excels at programming tasks.", size_gb: 4.0, filename: "deepseek-coder-6.7b-instruct.Q4_K_M.gguf", is_downloaded: false, fit_info: { fit_level: "Optimal" } },
-                          ]
-                        ).map(model => {
+                        {catalog.filter(c => !c.is_downloaded).map(model => {
                           const fitLevel = (model.fit_info?.fit_level as string) || "Unknown"
                           const isGoodFit = fitLevel.toLowerCase().includes("optimal") || fitLevel.toLowerCase().includes("perfect")
                           const isPoorFit = fitLevel.toLowerCase().includes("poor") || fitLevel.toLowerCase().includes("unsupported")
@@ -464,15 +546,15 @@ export default function PersonalLLMApp() {
                     <p className="text-sm text-gray-400">Connect cloud LLM providers to use alongside your local models. Keys are stored locally and never leave your machine.</p>
 
                     {[
-                      { label: "OpenAI", field: "openai_key" as const, placeholder: "sk-...", icon: "🟢" },
-                      { label: "Groq", field: "groq_key" as const, placeholder: "gsk_...", icon: "🟠" },
-                      { label: "Together AI", field: "together_key" as const, placeholder: "tog_...", icon: "🔵" },
+                      { label: "Gemini", field: "gemini_key" as const, placeholder: "AIza...", icon: "🔷", desc: "Free at aistudio.google.com" },
+                      { label: "Claude", field: "claude_key" as const, placeholder: "sk-ant-...", icon: "🟠", desc: "From console.anthropic.com" },
                     ].map(provider => (
                       <div key={provider.field} className="p-4 rounded-xl border border-white/5 bg-white/5">
-                        <label className="flex items-center gap-2 text-sm font-medium text-white mb-2">
+                        <label className="flex items-center gap-2 text-sm font-medium text-white mb-1">
                           <Cloud className="w-4 h-4 text-indigo-400" />
                           {provider.icon} {provider.label}
                         </label>
+                        <p className="text-xs text-gray-500 mb-2">{provider.desc}</p>
                         {savedKeysMasked[provider.field] && (
                           <div className="text-xs text-green-400 mb-2 flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" /> Saved: {savedKeysMasked[provider.field]}
@@ -707,29 +789,80 @@ export default function PersonalLLMApp() {
 
         {/* Input Box */}
         <div className="p-4 md:p-6 bg-linear-to-t from-[#0B0E14] to-transparent">
-          <div className="max-w-3xl mx-auto relative group">
-            <div className="absolute -inset-1 rounded-2xl bg-linear-to-r from-indigo-500 to-purple-500 opacity-20 group-focus-within:opacity-50 blur transition duration-500"></div>
-            <div className="relative flex items-center bg-surface-900 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
-              <textarea
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                placeholder="Message your Local LLM..."
-                className="flex-1 max-h-48 min-h-[60px] bg-transparent border-none focus:ring-0 text-white p-4 resize-none overflow-y-auto text-sm placeholder:text-gray-500"
-                rows={1}
-              />
+          <div className="max-w-3xl mx-auto">
+            {/* Context Status Banner */}
+            {contextStatus && (
+              <div className="mb-2 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-center gap-2">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {contextStatus}
+              </div>
+            )}
+            {/* Context Intelligence Toolbar */}
+            <div className="flex items-center gap-2 mb-2">
+              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.pdf,.py,.json,.csv,.js,.ts,.html,.css,.xml,.yaml,.yml" />
               <button
-                onClick={handleSend}
-                disabled={!input.trim() || isGenerating}
-                className="p-3 mr-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 disabled:text-gray-500 text-white rounded-xl transition-colors shadow-lg shadow-indigo-500/20"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-gray-400 hover:text-white transition-colors"
+                title="Upload file to knowledge base"
               >
-                <Send className="w-5 h-5" />
+                <Paperclip className="w-3.5 h-3.5" /> Upload
               </button>
+              <button
+                onClick={() => setUseRag(prev => !prev)}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors",
+                  useRag
+                    ? "bg-indigo-600/20 border-indigo-500/40 text-indigo-300"
+                    : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-white"
+                )}
+                title="Search your uploaded documents for context"
+              >
+                <Search className="w-3.5 h-3.5" /> RAG {useRag ? "ON" : "OFF"}
+              </button>
+              <button
+                onClick={() => setRefineDepth(prev => prev === 0 ? 1 : prev === 1 ? 2 : 0)}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors",
+                  refineDepth > 0
+                    ? "bg-amber-600/20 border-amber-500/40 text-amber-300"
+                    : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-white"
+                )}
+                title="Self-refine: model critiques and improves its own answer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                {refineDepth === 0 ? "Deep Think" : refineDepth === 1 ? "Refine ×1" : "Refine ×2"}
+              </button>
+              {contextSources.length > 0 && (
+                <span className="text-[10px] text-gray-500 ml-auto">
+                  📎 {contextSources.join(", ")}
+                </span>
+              )}
+            </div>
+            {/* Input Area */}
+            <div className="relative group">
+              <div className="absolute -inset-1 rounded-2xl bg-linear-to-r from-indigo-500 to-purple-500 opacity-20 group-focus-within:opacity-50 blur transition duration-500"></div>
+              <div className="relative flex items-center bg-surface-900 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
+                <textarea
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  placeholder="Message your Local LLM..."
+                  className="flex-1 max-h-48 min-h-[60px] bg-transparent border-none focus:ring-0 text-white p-4 resize-none overflow-y-auto text-sm placeholder:text-gray-500"
+                  rows={1}
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim() || isGenerating}
+                  className="p-3 mr-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 disabled:text-gray-500 text-white rounded-xl transition-colors shadow-lg shadow-indigo-500/20"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             <div className="text-center mt-3 text-[11px] text-gray-500">
               AI models can make mistakes. Verify important information.

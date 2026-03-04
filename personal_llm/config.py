@@ -89,13 +89,18 @@ MAX_HISTORY_TURNS = 20
 
 # ─── Web UI ───────────────────────────────────────────────────
 UI_PORT = int(os.getenv("PERSONAL_LLM_PORT", "0"))  # 0 = auto-find free port
-UI_HOST = "127.0.0.1"  # localhost only — fully private
+UI_HOST = "0.0.0.0"  # Enable local network access
 
 # ─── RAG Settings ─────────────────────────────────────────────
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 TOP_K_RESULTS = 5
+
+# ─── Context Intelligence ─────────────────────────────────────────
+
+# Self-Refine limits
+MAX_REFINE_DEPTH = 2
 
 # ─── Model Catalog ────────────────────────────────────────────
 # Pre-configured models that can be downloaded from HuggingFace

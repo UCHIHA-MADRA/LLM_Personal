@@ -32,7 +32,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "electron": "^40.6.1",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^24.13.3",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
@@ -42,7 +42,7 @@
     "appId": "com.personalllm.app",
     "productName": "Personal LLM",
     "directories": {
-      "output": "dist-electron"
+      "output": "dist-electron2"
     },
     "files": [
       "**/*",
@@ -52,6 +52,10 @@
       "!dist-electron"
     ],
     "extraResources": [
+      {
+        "from": "vc_redist.x64.exe",
+        "to": "vc_redist.x64.exe"
+      },
       {
         "from": "../personal_llm",
         "to": "personal_llm",

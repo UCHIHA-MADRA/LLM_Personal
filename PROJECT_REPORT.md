@@ -1,7 +1,7 @@
 # 🧠 Personal LLM 2.0 — Complete Project Report
 
-> **Version:** 2.0.0
-> **Date:** February 27, 2026
+> **Version:** 2.0.2
+> **Date:** March 4, 2026 (Updated)
 > **Author:** Built for Prabh's personal use
 > **Location:** `c:\Users\prabh\Desktop\LLM_Personal\`
 
@@ -44,7 +44,7 @@ A **fully offline, private AI assistant** that runs entirely on your personal PC
 - **💻 Code Generation** — Write, debug, explain code (CodeLlama, Qwen)
 - **📄 Document Q&A (RAG)** — Upload PDFs/text files, ask questions about them
 - **🌐 Cloud Proxy** — Connect API keys (OpenAI, Groq, Together) to mix local and cloud AI (see [Section 3.4: api.py](#34-apipy) for details)
-- **🔄 Multi-Model** — Switch between 27+ different AI models on-the-fly
+- **🔄 Multi-Model** — Switch between 28 different AI models on-the-fly
 - **📱 Mobile App** — Connect locally from your phone with the React Native Expo app (see [Section 3.12: Mobile App](#312-mobile-app-mobile))
 - **💾 Persistent History** — All conversations saved locally as JSON
 
@@ -121,19 +121,21 @@ There is **no server process**, no HTTP calls, no Docker container. Your Python 
 **What it contains:**
 
 - Module docstring describing the project
-- `__version__ = "2.0.0"` — version identifier
+- `__version__ = "2.0.2"` — version identifier
 
 **Key detail:** This file is intentionally minimal. It does NOT auto-import heavy modules like `llama_cpp` or `chromadb` to keep import times fast.
 
 ---
 
-### 3.2 `config.py` (106 lines)
+### 3.2 `config.py` (489 lines)
 
 **Purpose:** Central configuration file. Every setting the system uses is defined here.
 
 **Sections:**
 
-#### Directories (Lines 9-27)
+#### PyInstaller-Safe Path Resolution (Lines 13–43)
+
+The module detects whether the code is running as a normal Python script or as a frozen `.exe` (via PyInstaller/Electron). In frozen mode, user data paths use `%LOCALAPPDATA%\PersonalLLM` instead of the project directory (which may be read-only under `C:\Program Files`).
 
 ```
 BASE_DIR            → LLM_Personal/                              (project root)
@@ -174,11 +176,11 @@ DOCUMENTS_DIR       → LLM_Personal/personal_llm/documents/       (uploaded doc
 #### Web UI (Lines 52-54)
 
 - `UI_PORT = 7865` — Gradio server port (legacy standalone mode)
-- `UI_HOST = "127.0.0.1"` — Localhost only (never exposed to network)
+- `UI_HOST = "0.0.0.0"` — Binds to all interfaces (allows LAN access for mobile/other devices)
 
 > **Note:** The FastAPI backend (`api.py`) serves on port **8000** separately. See [Section 3.4](#3.4-api.py).
 
-#### RAG Settings (Lines 56-60)
+#### RAG Settings (Lines 94-98)
 
 | Setting                | Value              | Purpose                                        |
 | ---------------------- | ------------------ | ---------------------------------------------- |
@@ -187,9 +189,15 @@ DOCUMENTS_DIR       → LLM_Personal/personal_llm/documents/       (uploaded doc
 | `CHUNK_OVERLAP`        | `50` characters    | Overlap between chunks to preserve context     |
 | `TOP_K_RESULTS`        | `5`                | Number of relevant chunks retrieved per query  |
 
-#### Model Catalog (Lines 62-105)
+#### Context Intelligence Settings (Lines 100-104)
 
-A dictionary of pre-configured GGUF models that can be downloaded. The catalog started with 5 models in v1.0 and was expanded to **27 models** in v2.0 (see [Section 4: Model Catalog](#4-model-catalog) for the full list). Each entry has:
+| Setting             | Value | Purpose                                        |
+| ------------------- | ----- | ---------------------------------------------- |
+| `MAX_REFINE_DEPTH`  | `2`   | Maximum Self-Refine iterations per response    |
+
+#### Model Catalog (Lines 105-489)
+
+A dictionary of pre-configured GGUF models that can be downloaded. The catalog started with 5 models in v1.0 and was expanded to **28 models** in v2.0.1 (see [Section 4: Model Catalog](#4-model-catalog) for the full list). Each entry has:
 
 - `name` — Human-readable name
 - `repo_id` — HuggingFace repository (e.g., `bartowski/Phi-3.1-mini-4k-instruct-GGUF`)
@@ -246,30 +254,37 @@ A dictionary of pre-configured GGUF models that can be downloaded. The catalog s
 
 ### 3.4 `api.py`
 
-**Purpose:** FastAPI-based REST backend that serves as the unified API for the Electron desktop app, the mobile app, and cloud inference proxying.
+**Purpose:** FastAPI-based REST backend that serves as the unified API for the Electron desktop app, the mobile app, and cloud inference proxying. Also serves the React UI as static files for LAN browser access.
 
 **Key Endpoints:**
 
 | Endpoint              | Method | Purpose                                                       |
 | --------------------- | ------ | ------------------------------------------------------------- |
-| `/models`             | GET    | List available local GGUF models                              |
-| `/models/load`        | POST   | Load a specific model into memory                             |
-| `/status`             | GET    | Current engine status (loaded model, memory usage)            |
-| `/chat`               | POST   | Send a message and receive a response (supports streaming)    |
-| `/documents/upload`   | POST   | Upload a document for RAG indexing                            |
-| `/documents/query`    | POST   | Query the knowledge base                                      |
-| `/cloud/chat`         | POST   | **Cloud Proxy** — Forward requests to OpenAI/Groq/Together AI using user-provided API keys |
-| `/models/download`    | POST   | Background model downloading from HuggingFace                 |
+| `/`                   | GET    | Serves the React UI (static Next.js export) for LAN browsers  |
+| `/api/models`         | GET    | List all 28 catalog models with hardware fit info             |
+| `/api/models/load`    | POST   | Load a specific model into memory                             |
+| `/api/status`         | GET    | Current engine status (loaded model, memory usage)            |
+| `/api/chat`           | POST   | Send a message and receive a response (supports streaming)    |
+| `/api/knowledge/upload` | POST | Upload a document for RAG indexing                            |
+| `/api/knowledge/query`  | POST | Query the knowledge base                                      |
+| `/api/chat/cloud`     | POST   | **Cloud Proxy** — Forward requests to OpenAI/Groq/Together AI |
+| `/api/models/download`| POST   | Background model downloading from HuggingFace                 |
+| `/api/models/unload`  | POST   | Unload the current model to free GPU/RAM                      |
+| `/api/conversations`  | GET    | List all conversations                                        |
+| `/api/conversations/search` | GET | Search conversations by title or content                  |
+| `/api/conversations/{id}` | GET/DELETE | Get or delete a specific conversation              |
 
-**Cloud Proxy Feature:** The `/cloud/chat` endpoint allows users to configure external API keys (OpenAI, Groq, Together AI) so they can mix local inference with cloud models. The keys are stored locally in the config and never leave the machine except when making the API call to the provider. This is the mechanism behind the "Cloud Proxy" feature listed in the overview.
+**Static File Serving (v2.0.1):** The API now serves the Next.js static export at `/` so other devices on the LAN can access the full React UI by browsing to `http://<host-ip>:8000` — no Electron required. The `_find_ui_out_dir()` function searches for the `out/` directory in multiple candidate locations (dev mode, bundled Electron, PyInstaller).
 
-**Runtime:** Runs on `0.0.0.0:8000` (accessible on LAN for mobile app connectivity). The Electron app connects to `127.0.0.1:8000`, while the mobile app connects via the PC's LAN IP address.
+**Cloud Proxy Feature:** The `/api/chat/cloud` endpoint allows users to configure external API keys (OpenAI, Groq, Together AI) so they can mix local inference with cloud models. The keys are stored locally and never leave the machine except when making the API call to the provider. Cloud conversations are persisted to `chat_history/` just like local chat.
 
-> **Dependency Note:** FastAPI and `uvicorn` are required for this module (see [Section 7: Dependencies](#7-dependencies)).
+**Runtime:** Runs on `0.0.0.0:8000` (accessible on LAN for mobile app connectivity). The Electron app connects to `127.0.0.1:8000`, while the mobile app and LAN browsers connect via the PC's LAN IP address.
+
+> **Dependency Note:** FastAPI, `uvicorn`, and `python-multipart` are required for this module (see [Section 7: Dependencies](#7-dependencies)).
 
 ---
 
-### 3.5 `model_manager.py` (212 lines)
+### 3.5 `model_manager.py` (335 lines)
 
 **Purpose:** Manages GGUF model files — listing, downloading, and looking up models.
 
@@ -287,10 +302,11 @@ A dictionary of pre-configured GGUF models that can be downloaded. The catalog s
 | `_find_catalog_entry()`        | 41-46   | Internal. Matches a filename to a catalog entry.                                                                                                                         |
 | `get_model_path()`             | 48-63   | Resolves a catalog key (e.g., `"phi-3-mini"`) or filename to an absolute path. Returns `None` if not found.                                                              |
 | `get_chat_format()`            | 65-75   | Looks up the correct chat format (e.g., `"chatml"`, `"llama-3"`) for a model.                                                                                            |
-| `download_model()`             | 77-124  | Downloads a model from HuggingFace Hub. Uses `huggingface_hub.hf_hub_download()`. Saves directly to `models_dir`. **One-time operation** — skips if file already exists. |
-| `download_model_interactive()` | 126-157 | Interactive CLI menu. Shows all catalog models with download status (`✅ Downloaded` or `📥 ~X GB`). User picks a number.                                                |
-| `get_default_model()`          | 159-181 | Returns the best available model. Priority: config default → first local model → `None`.                                                                                 |
-| `print_status()`               | 183-195 | Prints current model status to console.                                                                                                                                  |
+| `download_model()`             | 88-133  | Downloads a model from HuggingFace Hub. Uses `huggingface_hub.hf_hub_download()`. Saves directly to `models_dir`. **One-time operation** — skips if file already exists. |
+| `download_model_stream()`      | 135-247 | Robust streaming download with progress callbacks, cancellation via `threading.Event`, SHA256 verification, and disk space checks. Used by the API's background download. |
+| `download_model_interactive()` | 249-280 | Interactive CLI menu. Shows all catalog models with download status (`✅ Downloaded` or `📥 ~X GB`). User picks a number.                                                |
+| `get_default_model()`          | 282-304 | Returns the best available model. Priority: config default → first local model → `None`.                                                                                 |
+| `print_status()`               | 306-318 | Prints current model status to console.                                                                                                                                  |
 
 **CLI Entry Point (Lines 198-211):**
 
@@ -305,7 +321,7 @@ A dictionary of pre-configured GGUF models that can be downloaded. The catalog s
 
 ---
 
-### 3.6 `chat_engine.py` (267 lines)
+### 3.6 `chat_engine.py` (358 lines)
 
 **Purpose:** Multi-turn conversation management with persistent history.
 
@@ -358,7 +374,7 @@ Manages multiple conversations and interfaces with the LLM engine.
 
 **Key design decisions:**
 
-1. **Dynamic Context Pruning**: `get_context_messages()` calculates exact token usage (approx. 4 chars/token). It prioritizes System Prompt + RAG Context, then fills remaining space with history. This guarantees we never overflow the context window (4096 tokens), preventing crashes even with long conversations.
+1. **Dynamic Context Pruning**: `get_context_messages()` uses a token-budget approach — it estimates tokens (approximately 4 chars per token) and greedily fills the context window. It prioritizes System Prompt + RAG Context, then fills remaining space with the most recent history messages. This guarantees we never overflow the context window, preventing crashes even with long conversations.
 2. **RAG injection**: When RAG context is available, it's appended to the system prompt.
 3. **Stream-then-save**: Tokens are yielded to UI immediately, but saved to history only after completion.
 
@@ -418,7 +434,7 @@ ChromaDB-compatible wrapper around `sentence-transformers`. Implements `__call__
 
 ---
 
-### 3.8 `hardware.py` (256 lines)
+### 3.8 `hardware.py` (273 lines)
 
 **Purpose:** Detects your PC's hardware specs and recommends which models will run well.
 
@@ -428,10 +444,33 @@ ChromaDB-compatible wrapper around `sentence-transformers`. Implements `__call__
 | ------------------- | ------ | ----------------------------- | ----------------------------------------------------------------------------------- |
 | `detect_hardware()` | 18-30  | Full system specs             | Orchestrator function                                                               |
 | `_detect_cpu()`     | 33-54  | CPU name and core count       | `platform.processor()` + `wmic cpu get Name` (Windows) / `/proc/cpuinfo` (Linux)   |
-| `_detect_ram()`     | 57-92  | Total RAM in GB               | `wmic memorychip` (Windows) / `sysctl hw.memsize` (macOS) / `/proc/meminfo` (Linux)|
+| `_detect_ram()`     | 57-92  | Total RAM in GB               | `wmic memorychip` (Windows) / `/proc/meminfo` (Linux) / `sysctl hw.memsize` (macOS) |
 | `_detect_gpu()`     | 95-131 | NVIDIA GPU name, VRAM, driver | `nvidia-smi --query-gpu=...` (cross-platform for NVIDIA GPUs)                       |
 
-> **Cross-platform note:** The detection functions use platform-specific commands with fallbacks. `_detect_cpu()` and `_detect_ram()` try Windows-first commands (`wmic`, `systeminfo`) and fall back to POSIX methods on Linux/macOS. `_detect_gpu()` calls `nvidia-smi`, which is available on all platforms with NVIDIA drivers installed. Apple Silicon (M1/M2/M3) GPU detection is handled implicitly — `llama-cpp-python` auto-uses Metal when available without explicit GPU detection.
+> **Cross-platform note:** The detection functions use platform-specific commands with fallbacks. `_detect_cpu()` tries Windows-first commands (`wmic`) and falls back to POSIX methods. `_detect_ram()` has dedicated paths for Windows (`wmic memorychip`), Linux (`/proc/meminfo`), and macOS (`sysctl hw.memsize`). `_detect_gpu()` calls `nvidia-smi`, which is available on all platforms with NVIDIA drivers installed. Apple Silicon (M1/M2/M3) GPU detection is handled implicitly — `llama-cpp-python` auto-uses Metal when available.
+
+---
+
+### 3.8a `llmfit_wrapper.py` (89 lines)
+
+**Purpose:** Wrapper around the `llmfit.exe` binary tool for hardware compatibility scoring. Calculates whether a specific model will fit in your GPU/RAM and estimates tokens-per-second performance.
+
+#### Function: `get_model_fit_info(hf_id: str)`
+
+Executes `llmfit.exe --json info <hf_model_id>` and parses the JSON output. Returns:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `fit_level` | str | "Perfect", "Good", "Tight", "Too Large" |
+| `estimated_tps` | float | Predicted tokens per second on your hardware |
+| `memory_required_gb` | float | How much RAM/VRAM the model needs |
+| `score` | float | Overall compatibility score (0-100) |
+
+**Key design decisions:**
+
+1. **Memory caching**: Results are cached in `_cache` dict to avoid repeated subprocess calls for the same model.
+2. **Windows subprocess handling**: Uses `STARTF_USESHOWWINDOW` to prevent console window popups when running as a GUI app.
+3. **Graceful failure**: Returns `None` if `llmfit.exe` is not found, times out, or returns invalid JSON.
 
 #### Recommendation Engine
 
@@ -457,7 +496,7 @@ Prints a formatted report showing:
 
 ---
 
-### 3.9 `web_ui.py` (510 lines)
+### 3.9 `web_ui.py` (796 lines)
 
 **Purpose:** Standalone Gradio web interface. This is the legacy browser-based UI accessible at `http://127.0.0.1:7865`. In v2.0, the primary desktop experience uses Electron + FastAPI instead (see [Section 3.11](#311-electron-desktop-app-ui)), but this Gradio UI remains functional as a standalone launcher.
 
@@ -565,34 +604,102 @@ Top-level launcher:
 
 ### 3.11 Electron Desktop App (`ui/`)
 
-**Purpose:** The primary v2.0 desktop experience. A standalone React + Electron application that wraps the FastAPI backend in a native window.
+**Purpose:** The primary v2.0 desktop experience. A standalone React + Electron application that bundles a Python interpreter and wraps the FastAPI backend in a native window.
 
-**How it works:**
+---
 
-1. `npm run electron:dev` starts the FastAPI backend (`api.py` on port 8000) in a background process.
-2. The Electron main process opens a `BrowserWindow` pointing to the bundled React UI.
-3. The React frontend communicates with the FastAPI backend via `http://127.0.0.1:8000`.
-4. On window close, the Electron process gracefully shuts down the FastAPI server and unloads the LLM.
+### 3.11a `context_engine.py` (498 lines)
+
+**Purpose:** The Context Intelligence Engine — research-backed techniques to improve small LLM response quality. Orchestrates 4 layers of processing that run entirely locally.
+
+#### Layers
+
+| Layer | Technique | Source |
+|-------|-----------|--------|
+| 1. **RAG Retrieval** | Pull relevant chunks from uploaded documents | Lewis et al., 2020 |
+| 2. **Recursive Context** | Decompose complex queries into sub-questions | MIT RLMs, 2025 |
+| 3. **Self-Refine** | Auto-critique and improve answers iteratively | Madaan et al., ICLR 2024 |
+| 4. **Adaptive Prompting** | Chain-of-Thought and task-specific templates | Wei et al., 2022 |
+
+#### Function: `classify_query(message)` (Lines 102-132)
+
+Classifies user queries as `"simple"`, `"complex"`, or `"code"` using regex patterns. Used to decide which processing layers to activate (e.g., complex queries trigger recursive decomposition).
+
+#### Class: `ContextEngine` (Lines 137-497)
+
+**Methods:**
+
+| Method | Lines | Purpose |
+|--------|-------|---------|
+| `retrieve_context()` | 157-172 | Query knowledge base for relevant document chunks |
+| `recursive_retrieve()` | 176-230 | Decompose complex queries into sub-questions, retrieve context for each independently, then merge results |
+| `self_refine()` | 234-301 | Iterative critique → improve loop. Generates answer, critiques it, then produces improved version |
+| `build_system_prompt()` | 305-341 | Builds optimized system prompt combining base prompt + RAG context + CoT instructions |
+| `process()` | 345-398 | Full pipeline (non-streaming): RAG → Recursive → Generate → Self-Refine |
+| `process_stream()` | 400-497 | Streaming pipeline: yields `status`, `context`, `token`, `refine_start`, `refine_token`, and `done` events |
+
+**Key design decisions:**
+
+1. **Adaptive activation**: Only activates layers that will help. A simple "hello" doesn't trigger RAG or CoT.
+2. **Graceful degradation**: If knowledge base fails, falls back to direct generation without crashing.
+3. **Prompt templates**: All prompts stored in a `PROMPTS` dictionary for easy customization.
+
+---
+
+**How Electron works:**
+
+1. Electron finds or extracts the bundled `python-embed` (embedded Python 3.11 with all dependencies pre-installed).
+2. On first run, Python is copied from `resources/python-embed/` to `%LOCALAPPDATA%\PersonalLLM\python-embed\` to avoid Electron's code signing corrupting Python binaries.
+3. The Electron main process spawns the Python backend via `-c "from personal_llm.api import launch_api; launch_api()"`.
+4. A splash screen displays "Starting AI engine..." while waiting up to 120 seconds for the backend to respond.
+5. The React frontend communicates with the FastAPI backend via `http://127.0.0.1:8000` using a dynamic `API_BASE` constant.
+6. On window close, the Electron process gracefully shuts down the Python backend.
 
 **Key files in `ui/`:**
 
-- Standalone React UI components (chat interface, model selector, settings, RAG panel)
-- Electron main process configuration
-- Build scripts for packaging
+| File/Dir | Purpose |
+|---|---|
+| `app/page.tsx` | Main React UI (chat, model selector, settings, RAG panel) |
+| `electron/main.js` | Electron main process (Python lifecycle, splash screen, window management) |
+| `python-embed/` | Bundled Python 3.11 with all pip packages pre-installed |
+| `python-embed/python311._pth` | Path config — includes `..` to resolve `personal_llm/` from `resources/` |
+| `package.json` | Build config with `extraResources` for `personal_llm/` and `python-embed/` |
 
-> **Relationship to `desktop_app.py`:** The older `desktop_app.py` (88 lines) at the project root is a lightweight **pywebview** wrapper that serves the Gradio UI in a native window. It was the v1.0 desktop approach. In v2.0, the Electron app in `ui/` replaces it as the primary desktop experience, though `desktop_app.py` still works as a fallback.
+**Packaging Architecture (v2.0.1):**
+
+```
+dist-electron2/win-unpacked/
+├── Personal LLM.exe          # Electron executable
+├── resources/
+│   ├── app.asar              # Bundled React UI + main.js
+│   ├── personal_llm/         # Python package (extraResources)
+│   │   ├── api.py
+│   │   ├── config.py
+│   │   └── ...
+│   └── python-embed/         # Embedded Python 3.11 (extraResources)
+│       ├── python.exe
+│       ├── python311._pth    # Includes '..' to reach resources/
+│       └── Lib/site-packages/ # fastapi, uvicorn, llama-cpp-python, etc.
+```
+
+**Critical Build Notes:**
+- The `python311._pth` file must contain `..` so embedded Python can find `personal_llm/` in the parent `resources/` directory.
+- `python-multipart` must be installed in `python-embed/` for the file upload endpoint to work.
+- The `findPython()` function copies `python-embed` to `%LOCALAPPDATA%` on first run because Electron's code signing process corrupts Python's `.pyd`/`.dll` files.
+
+> **Relationship to `desktop_app.py`:** The older `desktop_app.py` (88 lines) at the project root is a lightweight **pywebview** wrapper that serves the Gradio UI in a native window. It was the v1.0 desktop approach. In v2.0, the Electron app in `ui/` replaces it as the primary desktop experience.
 
 #### `desktop_app.py` (88 lines) — Legacy Desktop Wrapper
 
 **Flow:**
 
 1. Finds an available network port dynamically.
-2. Creates an HTML splash screen (`Loading Personal LLM...` with a spinner) and displays it using `pywebview`.
-3. Starts the Gradio server in a background thread without locking the main thread.
+2. Creates an HTML splash screen and displays it using `pywebview`.
+3. Starts the Gradio server in a background thread.
 4. Polls the Gradio localhost URL until it responds with HTTP 200.
-5. Checks if models exist in the adjacent `personal_llm_models` folder. If none, shows a native Windows error dialog.
-6. Replaces the splash screen with the actual loaded Gradio UI.
-7. Gracefully unloads the LLM from memory and terminates the server when the user closes the native window.
+5. Checks if models exist. If none, shows a native Windows error dialog.
+6. Replaces the splash screen with the loaded Gradio UI.
+7. Gracefully unloads the LLM when the user closes the window.
 
 **CLI Arguments:**
 
@@ -684,6 +791,10 @@ Inno Setup 6 compiler script that packages the PyInstaller `dist/PersonalLLM` fo
 | `llama-cpp-python`      | ≥0.3.0  | Core LLM engine (loads GGUF files)          | **Yes**              |
 | `fastapi`               | ≥0.100  | REST API backend for desktop & mobile apps  | **Yes**              |
 | `uvicorn`               | ≥0.20   | ASGI server to run FastAPI                  | **Yes**              |
+| `python-multipart`      | ≥0.0.22 | File upload support for FastAPI             | **Yes**              |
+| `httpx`                 | ≥0.24.0 | Async HTTP client                           | **Yes**              |
+| `requests`              | ≥2.31.0 | Sync HTTP client                            | **Yes**              |
+| `pydantic`              | ≥2.0.0  | Data validation                             | **Yes**              |
 | `huggingface-hub`       | ≥0.20.0 | Download models (one-time)                  | Yes for setup        |
 | `gradio`                | ≥4.0.0  | Legacy web UI framework                     | Only for legacy UI   |
 | `chromadb`              | ≥0.5.0  | Vector database for RAG                     | Only for RAG         |
@@ -702,7 +813,7 @@ Inno Setup 6 compiler script that packages the PyInstaller `dist/PersonalLLM` fo
 
 ## 4. Model Catalog
 
-The catalog was massively expanded in v2.0 to include **27 fully open-source and weights-available models**, categorized by tier:
+The catalog was massively expanded in v2.0 to include **28 fully open-source and weights-available models**, categorized by tier:
 
 - **Tier 1 (Fully Open):** OLMo 3, Pythia, GPT-NeoX, Cerebras-GPT, OpenCoder
 - **Tier 2 (Open Weights/Code):** DeepSeek-R1 (Distill-Qwen), Qwen3, Mistral, Falcon 7B/Falcon3, MPT, RWKV, StarCoder2, YaLM 100B, DeepSeek Coder
@@ -913,15 +1024,18 @@ LLM_Personal/
 │
 ├── personal_llm/                    # Main package (Core LLM Backend/Engine)
 │   ├── __init__.py                  # Package init, version string
-│   ├── api.py                       # FastAPI REST backend (serves desktop + mobile)
-│   ├── config.py                    # All configuration (106 lines)
+│   ├── api.py                       # FastAPI REST backend (620+ lines)
+│   ├── config.py                    # All configuration + model catalog (489 lines)
 │   ├── llm_engine.py                # Core inference engine (375 lines)
-│   ├── model_manager.py             # Model listing, downloading, lookup (212 lines)
-│   ├── chat_engine.py               # Multi-turn conversation management (267 lines)
+│   ├── model_manager.py             # Model listing, downloading, lookup (335 lines)
+│   ├── chat_engine.py               # Multi-turn conversation management (358 lines)
+│   ├── context_engine.py            # Context Intelligence (RAG/Refine/CoT) (498 lines)
 │   ├── knowledge_base.py            # RAG system with ChromaDB (260 lines)
-│   ├── hardware.py                  # Hardware detection & model recommendations (256 lines)
-│   ├── web_ui.py                    # Gradio web interface (510 lines)
-│   ├── setup_models.py              # Interactive model download CLI (78 lines)
+│   ├── hardware.py                  # Hardware detection & model recommendations (273 lines)
+│   ├── llmfit_wrapper.py            # Hardware compatibility scoring (89 lines)
+│   ├── web_ui.py                    # Gradio web interface (796 lines)
+│   ├── setup_models.py              # Interactive model download CLI (96 lines)
+│   ├── bin/llmfit.exe               # Hardware scoring binary
 │   ├── requirements.txt             # Python dependencies
 │   ├── chat_history/                # Saved conversations (JSON files)
 │   ├── knowledge_db/                # ChromaDB vector database
@@ -942,6 +1056,7 @@ LLM_Personal/
 ├── personal_llm_models/             # GGUF model files (auto-created)
 │   └── *.gguf                       # Downloaded open-weights models
 │
+├── .editorconfig                    # Consistent line endings & indentation
 ├── launch_personal_llm.py           # Legacy CLI Launcher (starts Gradio UI)
 ├── desktop_app.py                   # Legacy pywebview Desktop Wrapper
 ├── personal_llm.spec                # PyInstaller build config
@@ -994,31 +1109,38 @@ npm run electron:start
 python launch_personal_llm.py
 ```
 
-### Building the Desktop Executable
+### Building the Electron Desktop EXE (v2.0.1)
 
-The application can be compiled into a standalone Windows `.exe` using PyInstaller.
+The application is compiled into a standalone Windows `.exe` using Electron Builder with a bundled Python environment.
 
 ```powershell
-# Build the standalone application
+# Step 1: Ensure python-embed has all dependencies
+ui\python-embed\python.exe -m pip install python-multipart
+
+# Step 2: Build the Next.js frontend and Electron installer
+cd ui
+npm run electron:build
+```
+
+**Output:** `ui/dist-electron2/Personal LLM Setup 2.0.0.exe` (NSIS installer) and `Personal LLM 2.0.0.exe` (portable).
+
+**What gets bundled:**
+- `python-embed/` — Full Python 3.11 with `fastapi`, `uvicorn`, `llama-cpp-python`, `python-multipart`, `pydantic`, `httpx`, `requests`, and all other dependencies pre-installed
+- `personal_llm/` — The Python backend package (`.py` and `.json` files only)
+- The compiled Next.js React UI inside `app.asar`
+
+> [!IMPORTANT]
+> **Windows Defender may block `app-builder.exe`** during the build. If you see `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`, add the project folder as a Windows Defender exclusion:
+> ```powershell
+> # Run as Administrator:
+> Add-MpPreference -ExclusionPath "C:\Users\prabh\Desktop\LLM_Personal"
+> ```
+
+### Legacy: PyInstaller Build
+
+```powershell
 pyinstaller personal_llm.spec --clean --noconfirm
 ```
-
-Features of the desktop build:
-
-- Uses `onedir` mode for instant startup (no temporary extraction delay).
-- Uses `sys.executable` and `%LOCALAPPDATA%` properly to save user data.
-- Automatically bundles the `llama_cpp` DLL dependencies (CPU inference).
-
-### Building the Windows Installer
-
-Once PyInstaller finishes building the `dist/PersonalLLM` folder, you can package it into a professional Setup Wizard.
-
-```powershell
-# Requires Inno Setup 6 installed
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
-```
-
-This outputs `PersonalLLM_Setup_v1.0.0.exe` (~300MB), which creates Desktop shortcuts, Start Menu entries, and uninstaller support.
 
 ### CLI Options
 
@@ -1066,4 +1188,46 @@ python -m personal_llm.model_manager
 
 ---
 
-_This report was generated on February 27, 2026. All file contents and line counts are accurate as of this date._
+## 11. Changelog
+
+### v2.0.1 (March 4, 2026)
+
+**Bug Fixes:**
+- **Fixed: `python-multipart` missing** — The file upload endpoint (`/api/knowledge/upload`) crashed the entire FastAPI backend at startup because `python-multipart` was not installed in the bundled `python-embed`. This single missing package prevented ALL API endpoints from working.
+- **Fixed: Electron health check URL** — Changed from `http://0.0.0.0:8000` (not connectable on Windows) to `http://127.0.0.1:8000`.
+- **Fixed: Frontend fetch URLs** — All 13 `fetch()` calls in `page.tsx` were using raw `window.location.hostname` which resolves to `-` inside Electron's `app://-/` protocol. Replaced with `API_BASE` constant that correctly falls back to `127.0.0.1:8000`.
+- **Fixed: `python311._pth` path resolution** — Added `..` to the embedded Python path config so it can find `personal_llm/` in the parent `resources/` directory.
+- **Fixed: Python binary corruption** — Electron's code signing process corrupts `.pyd`/`.dll` files in the bundled `python-embed`. Added first-run extraction to `%LOCALAPPDATA%\PersonalLLM\python-embed\`.
+- **Fixed: API startup timeout** — Increased from 30 seconds to 120 seconds because heavy ML library imports (`llama_cpp`, `chromadb`, `sentence_transformers`) take 60+ seconds to load.
+
+**New Features:**
+- **Static file serving** — `api.py` now serves the Next.js static export at `/`, allowing any device on the LAN to access the full React UI at `http://<host-ip>:8000`.
+- **Auto-install dependencies** — `main.js` now includes `python-multipart` in the auto-install dependency list for first-run setup.
+- **Model catalog expanded** — From 27 to 28 models (added `qwen2.5-coder-7b`).
+
+### v2.0.2 (March 4, 2026) — Codebase Audit Fixes
+
+**Critical & High Priority Fixes:**
+- **Conversation History Fixed** — Resolved `AttributeError` by changing `conv.dict()` to `conv.to_dict()`. Fixed `context_engine.py` bug where conversation history was dropped when RAG/Refine/CoT was enabled.
+- **Cloud Chat Persistence** — `/api/chat/cloud` now saves conversations to `chat_history/` just like local chat. Previously, cloud messages vanished on page refresh.
+- **Hardware Detection Fixed** — `_detect_ram()` now correctly detects RAM on Linux (`/proc/meminfo`) and macOS (`sysctl hw.memsize`) instead of incorrectly returning disk size.
+- **SSE Stream Buffering** — Added partial line buffering in the React UI to prevent tokens from dropping across chunk boundaries during streaming.
+- **API Security** — Restricted CORS `allow_origins` to localized ports and Electron protocols. Sanitized file upload names to prevent directory traversal.
+- **Missing Dependencies** — Added missing core runtime packages to `requirements.txt` (`fastapi`, `uvicorn`, `python-multipart`, `requests`, `httpx`, `pydantic`).
+
+**New Features & Polish:**
+- **New API Endpoints**: Added `POST /api/models/unload` to free up GPU/RAM and `GET /api/conversations/search` to search chat histories.
+- **Configuration** — Removed duplicate variable definition for `TOP_K_RESULTS`.
+- **Code Quality** — Added `.editorconfig` to enforce LF endings and updated `.gitignore` for settings and local exports.
+
+**Documentation Accuracy Sweep:**
+- Fixed all file line counts in the report (e.g., `config.py` 106→489, `model_manager.py` 212→335, `chat_engine.py` 267→358)
+- Added full documentation for previously undocumented `context_engine.py` (498 lines) and `llmfit_wrapper.py` (89 lines)
+- Fixed endpoint path `/api/cloud/chat` → `/api/chat/cloud`
+- Added missing endpoints to the API table (`/api/models/unload`, `/api/conversations/search`, etc.)
+- Updated `__init__.py` version reference from `2.0.0` to `2.0.2`
+- Corrected `get_context_messages()` documentation (uses token-budget approach, not turn counting)
+
+---
+
+_This report was last updated on March 4, 2026._
