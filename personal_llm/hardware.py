@@ -68,9 +68,9 @@ def _detect_ram() -> float:
             total = 0
             for line in result.stdout.strip().split("\n"):
                 if line.startswith("Capacity="):
-                    total += int(line.split("=")[1].strip())
+                    total += int(line.split("=")[1].strip())  # type: ignore
             if total > 0:
-                return round(total / (1024**3), 1)
+                return float(round(total / (1024**3), 1))  # type: ignore
         except Exception:
             pass
         # Windows fallback: systeminfo
@@ -83,7 +83,7 @@ def _detect_ram() -> float:
                 if "Total Physical Memory" in line:
                     parts = line.split(":")[1].strip()
                     number = parts.replace(",", "").replace(".", "").split()[0]
-                    return round(int(number) / 1024, 1)
+                    return float(round(int(number) / 1024, 1))  # type: ignore
         except Exception:
             pass
 
@@ -95,7 +95,7 @@ def _detect_ram() -> float:
                 capture_output=True, text=True, timeout=5
             )
             mem_bytes = int(result.stdout.strip())
-            return round(mem_bytes / (1024**3), 1)
+            return float(round(mem_bytes / (1024**3), 1))  # type: ignore
         except Exception:
             pass
 
@@ -107,7 +107,7 @@ def _detect_ram() -> float:
                     if line.startswith("MemTotal:"):
                         # Format: "MemTotal:       16384000 kB"
                         kb = int(line.split()[1])
-                        return round(kb / (1024**2), 1)
+                        return float(round(kb / (1024**2), 1))  # type: ignore
         except Exception:
             pass
 
@@ -116,7 +116,7 @@ def _detect_ram() -> float:
 
 def _detect_gpu() -> Dict[str, Any]:
     """Detect NVIDIA GPU info."""
-    gpu_info = {
+    gpu_info: Dict[str, Any] = {
         "available": False,
         "name": "None (CPU-only mode)",
         "vram_mb": 0,

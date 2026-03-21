@@ -117,14 +117,14 @@ def classify_query(message: str) -> str:
             return "code"
 
     # Check complex
-    complexity_score = 0
+    complexity_score: int = 0
     for pattern in _COMPLEX_PATTERNS:
         if re.search(pattern, lower):
-            complexity_score += 1
+            complexity_score += 1  # type: ignore
 
     # Long queries are more likely complex
     if len(message.split()) > 25:
-        complexity_score += 1
+        complexity_score += 1  # type: ignore
 
     if complexity_score >= 2:
         return "complex"
@@ -154,7 +154,7 @@ class ContextEngine:
 
     # ── Layer 1: RAG Retrieval ────────────────────────────────────────────
 
-    def retrieve_context(self, message: str, n_results: int = None) -> str:
+    def retrieve_context(self, message: str, n_results: Optional[int] = None) -> str:
         """
         Query the knowledge base for relevant document chunks.
         Returns formatted context string, or empty string if KB unavailable.
@@ -212,11 +212,11 @@ class ContextEngine:
             logger.info(f"Recursive: Decomposed into {len(sub_questions)} sub-questions")
 
             # Retrieve context for each sub-question
-            all_contexts = set()  # deduplicate
+            all_contexts: set[str] = set()  # deduplicate
             if initial_context:
                 all_contexts.add(initial_context)
 
-            for sq in sub_questions[:3]:  # max 3 sub-questions
+            for sq in sub_questions[:3]:  # type: ignore
                 ctx = self.retrieve_context(sq, n_results=2)
                 if ctx:
                     all_contexts.add(ctx)

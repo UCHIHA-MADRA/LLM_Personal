@@ -30,7 +30,7 @@ class ModelManager:
         """List all GGUF model files in the models directory."""
         models = []
         for f in sorted(self.models_dir.glob("*.gguf")):
-            size_gb = f.stat().st_size / (1024**3)
+            size_gb = float(f.stat().st_size) / (1024**3)
             # Check if this matches a catalog entry
             catalog_info = self._find_catalog_entry(f.name)
             models.append({
@@ -48,6 +48,39 @@ class ModelManager:
             if entry["filename"] == filename:
                 return entry
         return None
+
+    def delete_model(self, filename: str) -> bool:
+        """
+        Delete a downloaded GGUF model file from disk.
+
+        Args:
+            filename: The GGUF filename to delete (e.g., 'model.gguf')
+
+        Returns:
+            True if deleted, False if not found or error.
+        """
+        # Sanitize: only allow filenames, block path traversal
+        if "/" in filename or "\\" in filename or ".." in filename:
+            logger.error(f"Invalid filename (path traversal blocked): {filename}")
+            return False
+
+        path = self.models_dir / filename
+        if not path.exists():
+            logger.warning(f"Model file not found for deletion: {filename}")
+            return False
+
+        if not str(path).endswith(".gguf"):
+            logger.error(f"Refusing to delete non-GGUF file: {filename}")
+            return False
+
+        try:
+            size_gb = path.stat().st_size / (1024**3)
+            path.unlink()
+            logger.info(f"Deleted model: {filename} ({size_gb:.2f} GB freed)")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete model {filename}: {e}")
+            return False
 
     def get_model_path(self, name_or_filename: str) -> Optional[str]:
         """

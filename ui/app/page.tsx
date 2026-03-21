@@ -1,12 +1,14 @@
 "use client"
+"use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Bot, Send, User, Menu, Settings, X, Trash2, Key, Cloud,
   Cpu, Zap, ChevronDown, Package, PlusCircle, AlertCircle, CheckCircle2, Loader2,
-  Paperclip, Brain, Search, Sparkles
+  Paperclip, Search, Sparkles, ImageIcon, Shield, HardDrive, AlertTriangle, Video
 } from "lucide-react"
+import NextImage from "next/image"
 import { cn } from "./lib/utils"
 
 // ─── TYPES ───
@@ -15,6 +17,8 @@ type Message = {
   id: string
   role: Role
   content: string
+  imageBase64?: string
+  imageMime?: string
 }
 type ModelStatus = {
   loaded: boolean
@@ -24,11 +28,19 @@ type ModelStatus = {
 }
 type ConversationItem = { id: string; title: string; updated_at: string; model?: string; message_count?: number }
 type CatalogEntry = {
-  key: string; name: string; description: string; size_gb: number;
+  key: string; name: string; description: string; best_at: string; size_gb: number;
   filename: string; is_downloaded: boolean; fit_info: Record<string, unknown>
 }
 type Toast = { id: string; message: string; type: "success" | "error" | "info" }
 type DownloadStatus = { active: boolean; key: string; progress: number; message: string; done: boolean; error: string | null }
+type PrivacyLocation = {
+  path: string;
+  size_bytes: number;
+}
+type PrivacyInfo = {
+  data_root: string;
+  locations: Record<string, PrivacyLocation>;
+}
 
 
 // ─── API CONFIG ───
@@ -101,10 +113,10 @@ export default function PersonalLLMApp() {
 
   const [conversations, setConversations] = useState<ConversationItem[]>([])
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [settingsTab, setSettingsTab] = useState<"models" | "apikeys">("models")
+  const [settingsTab, setSettingsTab] = useState<"models" | "apikeys" | "privacy">("models")
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
-  const [isLoadingModel, setIsLoadingModel] = useState(false)
+  const [loadingModelFilename, setLoadingModelFilename] = useState<string | null>(null)
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [backendConnected, setBackendConnected] = useState(false)
@@ -112,6 +124,9 @@ export default function PersonalLLMApp() {
   // API Key states
   const [apiKeys, setApiKeys] = useState({ gemini_key: "", claude_key: "" })
   const [savedKeysMasked, setSavedKeysMasked] = useState<Record<string, string>>({})
+
+  // Privacy Info state
+  const [privacyInfo, setPrivacyInfo] = useState<PrivacyInfo | null>(null)
 
   // Context Intelligence states
   const [useRag, setUseRag] = useState(false)
@@ -132,11 +147,20 @@ export default function PersonalLLMApp() {
   }, [])
 
   // ─── Data Fetching ───
-  const fetchStatus = useCallback(() => {
-    fetch(`${API_BASE}/api/status`)
-      .then(res => res.json())
-      .then(data => { setStatus(data); setBackendConnected(true) })
-      .catch(() => { setBackendConnected(false) })
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/status`)
+      if (res.ok) {
+        setStatus(await res.json())
+        setBackendConnected(true)
+      } else {
+        setBackendConnected(false)
+      }
+      const pRes = await fetch(`${API_BASE}/api/privacy/info`)
+      if (pRes.ok) setPrivacyInfo(await pRes.json())
+    } catch {
+      setBackendConnected(false)
+    }
   }, [])
 
   const fetchData = useCallback(() => {
@@ -227,8 +251,7 @@ export default function PersonalLLMApp() {
     } catch { addToast("Failed to load conversation", "error") }
   }
 
-  const deleteConversation = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
+  const deleteConversation = async (id: string) => {
     try {
       await fetch(`${API_BASE}/api/conversations/${id}`, { method: "DELETE" })
       if (currentConversationId === id) newConversation()
@@ -257,7 +280,12 @@ export default function PersonalLLMApp() {
       return
     }
 
-    const userMsg: Message = { id: Date.now().toString(), role: "user", content: input }
+    const messageText = input.trim()
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: messageText,
+    }
     setMessages(prev => [...prev, userMsg])
     setInput("")
     setIsGenerating(true)
@@ -272,7 +300,7 @@ export default function PersonalLLMApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: input,
+          message: messageText,
           conversation_id: currentConversationId,
           max_tokens: 1024,
           temperature: 0.7,
@@ -296,7 +324,6 @@ export default function PersonalLLMApp() {
         if (done) break
         sseBuffer += decoder.decode(value, { stream: true })
         const lines = sseBuffer.split('\n')
-        // Keep the last (potentially incomplete) line in the buffer
         sseBuffer = lines.pop() || ''
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -369,7 +396,7 @@ export default function PersonalLLMApp() {
 
   // ─── Model Load ───
   const handleLoadModel = async (filename: string) => {
-    setIsLoadingModel(true)
+    setLoadingModelFilename(filename)
     try {
       const res = await fetch(`${API_BASE}/api/models/load`, {
         method: "POST",
@@ -381,10 +408,22 @@ export default function PersonalLLMApp() {
         setIsSettingsOpen(false)
         addToast("Model loaded successfully!", "success")
       } else {
-        addToast("Failed to load model", "error")
+        const err = await res.json().catch(() => ({ detail: "Unknown error" }))
+        addToast(err.detail || "Failed to load model", "error")
       }
     } catch { addToast("Network error loading model", "error") }
-    finally { setIsLoadingModel(false) }
+    finally { setLoadingModelFilename(null) }
+  }
+
+  // ─── Model Unload ───
+  const handleUnloadModel = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/models/unload`, { method: "POST" })
+      if (res.ok) {
+        fetchStatus()
+        addToast("Model unloaded", "success")
+      }
+    } catch { addToast("Failed to unload model", "error") }
   }
 
   // ─── Model Download ───
@@ -403,6 +442,22 @@ export default function PersonalLLMApp() {
         addToast(err.detail || "Download failed to start", "error")
       }
     } catch { addToast("Network error starting download", "error") }
+  }
+
+  // ─── Model Delete ───
+  const handleDeleteModel = async (filename: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete "${name}"?\n\nThis will permanently remove the model file from disk and free up space.`)) return
+    try {
+      const res = await fetch(`${API_BASE}/api/models/${encodeURIComponent(filename)}`, { method: "DELETE" })
+      if (res.ok) {
+        fetchStatus()
+        fetchData()
+        addToast(`Deleted ${name}`, "success")
+      } else {
+        const err = await res.json().catch(() => ({ detail: "Delete failed" }))
+        addToast(err.detail || "Failed to delete model", "error")
+      }
+    } catch { addToast("Network error deleting model", "error") }
   }
 
   // ─── Save API Keys ───
@@ -426,6 +481,30 @@ export default function PersonalLLMApp() {
       }
     } catch { addToast("Network error saving keys", "error") }
   }
+
+  // ─── Data Wipe ───
+  const handleWipeData = async () => {
+    const confirmation = prompt('Are you sure you want to securely wipe ALL user data? This deletes all conversations, files, and settings. This cannot be undone.\n\nType "WIPE" to confirm:')
+    if (confirmation !== "WIPE") return
+
+    try {
+      const res = await fetch(`${API_BASE}/api/data/wipe`, { 
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: "DELETE ALL MY DATA" })
+      })
+      if (res.ok) {
+        addToast("All personal data securely wiped", "success")
+        setMessages([])
+        fetchData()
+        fetchStatus()
+        setIsSettingsOpen(false)
+      } else {
+        addToast("Failed to wipe data", "error")
+      }
+    } catch { addToast("Network error wiping data", "error") }
+  }
+
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-linear-to-br from-[#050510] via-[#0f0c29] to-[#302b63]">
@@ -454,16 +533,37 @@ export default function PersonalLLMApp() {
               {/* Tabs */}
               <div className="flex border-b border-white/10">
                 <button onClick={() => setSettingsTab("models")} className={cn("flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
-                  settingsTab === "models" ? "text-indigo-400 border-b-2 border-indigo-400" : "text-gray-400 hover:text-white"
+                  settingsTab === "models" ? "text-indigo-400 border-b-2 border-indigo-400 bg-white/5" : "text-gray-400 hover:text-white"
                 )}><Package className="w-4 h-4" /> Models</button>
                 <button onClick={() => setSettingsTab("apikeys")} className={cn("flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
-                  settingsTab === "apikeys" ? "text-indigo-400 border-b-2 border-indigo-400" : "text-gray-400 hover:text-white"
+                  settingsTab === "apikeys" ? "text-indigo-400 border-b-2 border-indigo-400 bg-white/5" : "text-gray-400 hover:text-white"
                 )}><Key className="w-4 h-4" /> API Keys</button>
+                <button onClick={() => setSettingsTab("privacy")} className={cn("flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
+                  settingsTab === "privacy" ? "text-indigo-400 border-b-2 border-indigo-400 bg-white/5" : "text-gray-400 hover:text-white"
+                )}><Shield className="w-4 h-4" /> Privacy</button>
               </div>
 
               <div className="p-5 overflow-y-auto flex-1">
                 {settingsTab === "models" ? (
                   <>
+                    {/* Currently Loaded */}
+                    {status.loaded && (
+                      <div className="mb-6 p-4 rounded-xl border border-green-500/20 bg-green-500/5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                              <span className="text-sm font-medium text-green-300">Active Model</span>
+                            </div>
+                            <div className="text-xs text-green-400 mt-1">{status.name} • {status.size_gb} GB</div>
+                          </div>
+                          <button onClick={handleUnloadModel}
+                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-xs rounded-lg transition-colors"
+                          >Unload</button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Downloaded Section */}
                     <div className="mb-6">
                       <h4 className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4"><Package className="w-4 h-4" /> Downloaded & Ready</h4>
@@ -471,17 +571,53 @@ export default function PersonalLLMApp() {
                         <p className="text-sm text-gray-400 p-4 border border-dashed border-white/10 rounded-xl text-center">No models downloaded yet.</p>
                       ) : (
                         <div className="space-y-3">
-                          {catalog.filter(c => c.is_downloaded).map(model => (
-                            <div key={model.key} className="p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 flex items-center justify-between hover:bg-indigo-500/10 transition-colors">
-                              <div>
-                                <div className="font-medium text-indigo-300 text-sm">{model.name}</div>
-                                <div className="text-xs text-indigo-400 mt-1">{(model.fit_info?.fit_level as string) || "Unknown fit"} • {model.size_gb} GB</div>
+                          {catalog.filter(c => c.is_downloaded).map(model => {
+                            const isThisLoading = loadingModelFilename === model.filename
+                            const isThisActive = status.loaded && status.name === model.filename.replace('.gguf', '')
+                            return (
+                              <div key={model.key} className={cn(
+                                "p-4 rounded-xl border transition-colors",
+                                isThisActive ? "border-green-500/30 bg-green-500/5" : "border-indigo-500/20 bg-indigo-500/5 hover:bg-indigo-500/10"
+                              )}>
+                                <div className="flex items-center justify-between">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-medium text-indigo-300 text-sm">{model.name}</span>
+                                      {isThisActive && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">ACTIVE</span>}
+                                    </div>
+                                    {model.best_at && (
+                                      <div className="flex flex-wrap gap-1 mt-1.5">
+                                        {model.best_at.split(',').map((tag: string) => (
+                                          <span key={tag.trim()} className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/20">{tag.trim()}</span>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <div className="text-xs text-indigo-400 mt-1">{(model.fit_info?.fit_level as string) || "Unknown fit"} • {model.size_gb} GB</div>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0 ml-2">
+                                    {isThisActive ? (
+                                      <button onClick={handleUnloadModel}
+                                        className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-xs rounded-lg transition-colors"
+                                      >Unload</button>
+                                    ) : (
+                                      <>
+                                        <button disabled={!!loadingModelFilename} onClick={() => handleLoadModel(model.filename)}
+                                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors shadow-lg shadow-indigo-500/20 flex items-center gap-2"
+                                        >
+                                          {isThisLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                                          {isThisLoading ? "Loading..." : "Load"}
+                                        </button>
+                                        <button onClick={() => handleDeleteModel(model.filename, model.name)}
+                                          className="p-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-lg transition-colors"
+                                          title="Delete model from disk"
+                                        ><Trash2 className="w-3.5 h-3.5" /></button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                              <button disabled={isLoadingModel} onClick={() => handleLoadModel(model.filename)}
-                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors shadow-lg shadow-indigo-500/20 shrink-0"
-                              >{isLoadingModel ? "Loading..." : "Load Model"}</button>
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       )}
                     </div>
@@ -502,7 +638,7 @@ export default function PersonalLLMApp() {
                                 <div className="flex-1">
                                   <div className="font-medium text-white text-sm">{model.name}</div>
                                   <p className="text-xs text-gray-400 mt-1 line-clamp-2 pr-4">{model.description}</p>
-                                  <div className="text-xs mt-2 flex items-center gap-2">
+                                  <div className="text-xs mt-2 flex items-center gap-2 flex-wrap">
                                     <span className="text-gray-500">{model.size_gb} GB</span>
                                     <span className="text-gray-600">•</span>
                                     <span className={cn(
@@ -512,6 +648,13 @@ export default function PersonalLLMApp() {
                                           : "text-yellow-400 border-yellow-400/20 bg-yellow-400/10"
                                     )}>{fitLevel}</span>
                                   </div>
+                                  {model.best_at && (
+                                    <div className="flex flex-wrap gap-1 mt-1.5">
+                                      {model.best_at.split(',').map((tag: string) => (
+                                        <span key={tag.trim()} className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/20">{tag.trim()}</span>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                                 <button
                                   disabled={!!downloadStatus?.active}
@@ -540,7 +683,7 @@ export default function PersonalLLMApp() {
                       </div>
                     </div>
                   </>
-                ) : (
+                ) : settingsTab === "apikeys" ? (
                   /* API Keys Tab */
                   <div className="space-y-6">
                     <p className="text-sm text-gray-400">Connect cloud LLM providers to use alongside your local models. Keys are stored locally and never leave your machine.</p>
@@ -574,6 +717,51 @@ export default function PersonalLLMApp() {
                       className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-medium transition-colors shadow-lg shadow-indigo-500/20"
                     >Save API Keys</button>
                   </div>
+                ) : (
+                  /* Privacy Tab */
+                  <div className="space-y-6">
+                    <div className="p-4 rounded-xl border border-green-500/20 bg-green-500/5">
+                      <div className="flex items-center gap-2 text-green-400 font-semibold mb-2">
+                        <Shield className="w-5 h-5" /> 100% Privacy Guarantee
+                      </div>
+                      <p className="text-sm text-green-300/80">
+                        Personal LLM runs entirely on your local machine. We collect zero telemetry, have no analytics, and do not track your usage.
+                      </p>
+                    </div>
+
+                    {privacyInfo && (
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                          <HardDrive className="w-4 h-4" /> Local Data Footprint
+                        </h4>
+                        <div className="text-xs font-mono text-gray-500 mb-2 truncate bg-black/20 p-2 rounded-lg border border-white/5">
+                          Root: {privacyInfo.data_root}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          {Object.entries(privacyInfo.locations).map(([name, data]) => (
+                            <div key={name} className="p-3 bg-white/5 rounded-xl border border-white/10">
+                              <div className="text-gray-400 capitalize text-sm mb-1">{name.replace('_', ' ')}</div>
+                              <div className="font-semibold text-white">{(data.size_bytes / (1024 * 1024)).toFixed(1)} MB</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-4 mt-6 border-t border-red-500/20">
+                      <h4 className="flex items-center gap-2 text-xs font-semibold text-red-400 uppercase tracking-wider mb-2">
+                        <AlertTriangle className="w-4 h-4" /> Danger Zone
+                      </h4>
+                      <p className="text-xs text-gray-400 mb-3">
+                        Securely erase all locally stored conversations, RAG documents, and settings. This action is irreversible. Hand-downloaded model files will remain on disk until manually deleted.
+                      </p>
+                      <button onClick={handleWipeData}
+                        className="py-2.5 px-4 w-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 rounded-lg hover:text-red-400 transition-colors text-sm font-medium flex-center gap-2 justify-center flex items-center"
+                      >
+                        <Trash2 className="w-4 h-4" /> Wipe Personal Data
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             </motion.div>
@@ -599,7 +787,17 @@ export default function PersonalLLMApp() {
                 </div>
                 <div>
                   <h1 className="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-linear-to-r from-white to-gray-400">Personal LLM</h1>
-                  <p className="text-xs text-indigo-400 font-medium">100% Local Inference</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    {(status?.name || "").startsWith("gemini") || (status?.name || "").startsWith("claude") ? (
+                      <span className="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded-sm font-medium uppercase tracking-wider flex items-center gap-1">
+                        <Cloud className="w-3 h-3" /> Cloud
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-sm font-medium uppercase tracking-wider flex items-center gap-1">
+                        <Shield className="w-3 h-3" /> 100% Local
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <button onClick={() => setIsSidebarOpen(false)} className="p-2 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-white">
@@ -647,7 +845,7 @@ export default function PersonalLLMApp() {
                     )}
                   >{conv.title || "Untitled Chat"}</button>
                   <button
-                    onClick={(e) => deleteConversation(conv.id, e)}
+                    onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-gray-500 hover:text-red-400 hover:bg-red-400/10 opacity-0 group-hover:opacity-100 transition-all"
                     title="Delete conversation"
                   ><Trash2 className="w-3.5 h-3.5" /></button>
@@ -772,6 +970,18 @@ export default function PersonalLLMApp() {
                       ? "bg-indigo-600 text-white rounded-tr-none shadow-xl shadow-indigo-900/20"
                       : "glass-panel text-gray-200 rounded-tl-none shadow-xl shadow-black/20"
                   )}>
+                    {/* Image thumbnail if user attached one */}
+                    {msg.imageBase64 && (
+                      <div className="relative w-[200px] h-[150px] mb-2">
+                        <NextImage
+                          src={`data:${msg.imageMime || 'image/jpeg'};base64,${msg.imageBase64}`}
+                          alt="Attached"
+                          fill
+                          className="rounded-lg border border-white/20 object-cover"
+                          unoptimized
+                        />
+                      </div>
+                    )}
                     {msg.content || (isGenerating && idx === messages.length - 1 ? (
                       <span className="flex items-center gap-1">
                         <span className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse" />
@@ -799,13 +1009,28 @@ export default function PersonalLLMApp() {
             )}
             {/* Context Intelligence Toolbar */}
             <div className="flex items-center gap-2 mb-2">
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.pdf,.py,.json,.csv,.js,.ts,.html,.css,.xml,.yaml,.yml" />
+              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.pdf,.py,.json,.csv,.js,.ts,.html,.css,.xml,.yaml,.yml,.docx,.pptx,.xlsx,.doc,.xls,.ppt" />
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-gray-400 hover:text-white transition-colors"
-                title="Upload file to knowledge base"
+                title="Upload PDF, Doc, or Text file to local memory"
               >
-                <Paperclip className="w-3.5 h-3.5" /> Upload
+                <Paperclip className="w-3.5 h-3.5" /> File
+              </button>
+              <button
+                disabled
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 border border-white/5 text-xs text-gray-600 cursor-not-allowed opacity-50"
+                title="Vision support (LLaVA/Qwen-VL) coming soon for local privacy-first image analysis"
+              >
+                <ImageIcon className="w-3.5 h-3.5" /> Image
+                <span className="text-[8px] bg-white/10 px-1 rounded uppercase tracking-tighter">Soon</span>
+              </button>
+              <button
+                disabled
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 border border-white/5 text-xs text-gray-600 cursor-not-allowed opacity-50"
+                title="Video analysis coming in a future update"
+              >
+                <Video className="w-3.5 h-3.5" /> Video
               </button>
               <button
                 onClick={() => setUseRag(prev => !prev)}

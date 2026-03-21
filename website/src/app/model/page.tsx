@@ -19,7 +19,7 @@ export default function ModelCatalog() {
     return (
         <div className="min-h-screen bg-[#0b0e14] text-slate-200 overflow-x-hidden relative selection:bg-indigo-500/30 font-sans">
             {/* Background Gradients */}
-            <div className="absolute top-0 inset-x-0 h-[600px] w-full bg-gradient-to-b from-purple-900/20 via-[#0b0e14] to-transparent pointer-events-none opacity-60 blur-3xl"></div>
+            <div className="absolute top-0 inset-x-0 h-[600px] w-full bg-linear-to-b from-purple-900/20 via-[#0b0e14] to-transparent pointer-events-none opacity-60 blur-3xl"></div>
 
             {/* Navbar Minimal */}
             <nav className="fixed top-0 inset-x-0 z-50 h-16 border-b border-white/5 bg-[#0b0e14]/70 backdrop-blur-md px-6 flex items-center">
@@ -71,7 +71,7 @@ export default function ModelCatalog() {
                                 <span className="text-xs font-medium bg-white/10 px-2 py-1 rounded-md text-slate-300">Tier {mod.tier}</span>
                             </div>
                             <h3 className="text-xl font-bold text-white mb-2">{mod.name}</h3>
-                            <p className="text-sm text-slate-400 mb-6 flex-grow">{mod.desc}</p>
+                            <p className="text-sm text-slate-400 mb-6 grow">{mod.desc}</p>
 
                             <div className="flex items-center justify-between pt-4 border-t border-white/5">
                                 <div className="flex items-center gap-2 text-slate-500 text-sm">

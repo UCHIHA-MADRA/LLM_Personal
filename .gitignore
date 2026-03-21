@@ -33,6 +33,7 @@ personal_llm/knowledge_db/
 personal_llm/documents/
 personal_llm/models/
 personal_llm/exports/
+personal_llm/bin/
 settings.json
 
 # OS

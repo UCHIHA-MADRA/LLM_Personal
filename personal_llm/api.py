@@ -9,8 +9,11 @@ import sys
 import json
 import logging
 import threading
+import builtins
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+import shutil
+from logging.handlers import TimedRotatingFileHandler
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
@@ -25,23 +28,44 @@ from .knowledge_base import KnowledgeBase
 from .context_engine import ContextEngine
 from .llmfit_wrapper import get_model_fit_info
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging — file + console
+_log_dir = config.PERSONAL_LLM_DIR / "logs"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_file_handler = TimedRotatingFileHandler(
+    str(_log_dir / "personal_llm.log"),
+    when="midnight",
+    backupCount=7,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[logging.StreamHandler(), _file_handler],
+)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Personal LLM API", version="2.0.1")
+app = FastAPI(title="Personal LLM API", version="2.0.2")
 
-# Enable CORS for the local React/Tauri frontend
+# Enable CORS — explicit allowlist for security
+allowed = [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "app://-",        # Electron
+    "file://",        # Local HTML
+]
+import socket
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    lan_ip = s.getsockname()[0]
+    s.close()
+    allowed.append(f"http://{lan_ip}:8000")
+except Exception:
+    pass
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:8000",
-        "http://localhost:8000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-        "app://-",       # Electron
-        "file://",       # Local file protocol
-    ],
+    allow_origins=allowed,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,13 +85,13 @@ try:
     model_manager = ModelManager()
 except Exception as e:
     logger.error(f"Model manager init failed: {e}")
-    model_manager = None
+    model_manager = None  # type: ignore
 
 try:
     chat_engine = ChatEngine(engine)
 except Exception as e:
     logger.error(f"Chat engine init failed: {e}")
-    chat_engine = None
+    chat_engine = None  # type: ignore
 
 try:
     kb = KnowledgeBase()
@@ -79,11 +103,14 @@ try:
     context_engine = ContextEngine(engine, kb)
 except Exception as e:
     logger.warning(f"Context engine init failed: {e}")
-    context_engine = None
+    context_engine = None  # type: ignore
 
 # Download progress tracking (thread-safe)
 download_state: Dict[str, Any] = {}
 download_lock = threading.Lock()
+
+# Thread lock for model load/unload/delete operations (prevents race conditions)
+model_lock = threading.Lock()
 
 # Settings file path
 SETTINGS_FILE = config.PERSONAL_LLM_DIR / "settings.json"
@@ -149,6 +176,7 @@ async def get_models():
     """Get the model catalog, local downloaded models, and hardware fit scores."""
     
     # 1. Local downloaded models
+    assert model_manager is not None, "Model manager not initialized"
     local_files = model_manager.list_local_models()
     downloaded_filenames = [m["filename"] for m in local_files]
     
@@ -164,6 +192,7 @@ async def get_models():
             "key": key,
             "name": entry["name"],
             "description": entry["description"],
+            "best_at": entry.get("best_at", ""),
             "size_gb": entry["size_gb"],
             "filename": entry["filename"],
             "is_downloaded": is_downloaded,
@@ -178,23 +207,68 @@ async def get_models():
 @app.post("/api/models/load")
 async def load_model(req: LoadModelRequest):
     """Load a specific model from disk into the LLM Engine."""
-    path = model_manager.models_dir / req.filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Model file not found: {req.filename}")
+    if not model_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another model operation is already in progress. Please wait.")
+    try:
+        assert model_manager is not None, "Model manager not initialized"
+        path = model_manager.models_dir / req.filename
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"Model file not found: {req.filename}")
 
-    chat_format = model_manager.get_chat_format(req.filename)
-    
-    success = engine.load(
-        str(path),
-        n_gpu_layers=config.N_GPU_LAYERS,
-        n_ctx=config.CONTEXT_SIZE,
-        chat_format=chat_format,
-    )
-    
-    if success:
-        return {"status": "success", "message": f"Loaded {req.filename}"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to load model. Check server logs.")
+        chat_format = model_manager.get_chat_format(req.filename)
+
+        try:
+            success = engine.load(
+                str(path),
+                n_gpu_layers=config.N_GPU_LAYERS,
+                n_ctx=config.CONTEXT_SIZE,
+                chat_format=chat_format,
+            )
+        except Exception as e:
+            logger.error(f"Model load exception: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
+
+        if success:
+            return {"status": "success", "message": f"Loaded {req.filename}"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to load model. Possible causes: insufficient RAM, corrupted file, or GPU driver issue. Check server logs for details.")
+    finally:
+        model_lock.release()
+
+@app.post("/api/models/unload")
+async def unload_model():
+    """Explicitly unload the currently loaded model to free memory."""
+    if not model_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another model operation is in progress.")
+    try:
+        if not engine.is_loaded:
+            return {"status": "ok", "message": "No model was loaded"}
+        name = engine.model_name
+        engine.unload()
+        return {"status": "success", "message": f"Unloaded {name}"}
+    finally:
+        model_lock.release()
+
+@app.delete("/api/models/{filename}")
+async def delete_model(filename: str):
+    """Delete a downloaded model file from disk."""
+    if not model_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another model operation is in progress.")
+    try:
+        assert model_manager is not None, "Model manager not initialized"
+        # Auto-unload if this model is currently active
+        if engine.is_loaded and engine.model_name == filename.replace('.gguf', ''):
+            engine.unload()
+            import time
+            time.sleep(1.0)  # Give OS time to release file handles
+
+        success = model_manager.delete_model(filename)
+        if success:
+            return {"status": "success", "message": f"Deleted {filename}"}
+        else:
+            raise HTTPException(status_code=404, detail=f"Model not found or could not be deleted: {filename}")
+    finally:
+        model_lock.release()
 
 @app.post("/api/models/download")
 async def download_model(req: DownloadModelRequest):
@@ -219,6 +293,7 @@ async def download_model(req: DownloadModelRequest):
 
     def _run_download():
         try:
+            assert model_manager is not None, "Model manager not initialized"
             result = model_manager.download_model_stream(req.catalog_key, progress_callback=_progress_cb)
             with download_lock:
                 download_state["done"] = True
@@ -255,8 +330,9 @@ async def get_settings():
     # Mask keys for security
     masked = {}
     for k, v in settings.items():
-        if v and isinstance(v, str) and len(v) > 8:
-            masked[k] = v[:4] + "*" * (len(v) - 8) + v[-4:]
+        v_str = str(v)
+        if v and isinstance(v, str) and len(v_str) > 8:
+            masked[k] = v_str[:4] + "*" * (len(v_str) - 8) + v_str[-4:]  # type: ignore
         else:
             masked[k] = v
     return masked
@@ -304,6 +380,8 @@ async def cloud_chat(req: CloudChatRequest):
     
     model = req.model or pc["default_model"]
 
+    assert chat_engine is not None, "Chat engine not initialized"
+
     # Persist cloud conversations
     if req.conversation_id:
         conv = chat_engine.get_conversation(req.conversation_id)
@@ -316,7 +394,7 @@ async def cloud_chat(req: CloudChatRequest):
     
     async def cloud_stream():
         async with httpx.AsyncClient(timeout=60.0) as client:
-            full_response = ""
+            full_response: str = ""
             try:
                 init_payload = json.dumps({"type": "init", "conversation_id": conv.id})
                 yield f"data: {init_payload}\n\n"
@@ -329,7 +407,10 @@ async def cloud_chat(req: CloudChatRequest):
                     }
                     body = {
                         "model": model,
-                        "messages": [{"role": "user", "content": req.message}],
+                        "messages": [
+                            {"role": m["role"], "content": m["content"]}
+                            for m in conv.get_context_messages()
+                        ],
                         "temperature": req.temperature,
                         "max_tokens": req.max_tokens,
                         "stream": True,
@@ -347,7 +428,7 @@ async def cloud_chat(req: CloudChatRequest):
                                 delta = chunk["choices"][0].get("delta", {})
                                 content = delta.get("content", "")
                                 if content:
-                                    full_response += content
+                                    full_response += str(content)  # type: ignore
                                     payload = json.dumps({"type": "token", "content": content})
                                     yield f"data: {payload}\n\n"
                             except Exception:
@@ -360,12 +441,18 @@ async def cloud_chat(req: CloudChatRequest):
                         "anthropic-version": "2023-06-01",
                         "Content-Type": "application/json",
                     }
+                    context = conv.get_context_messages()
+                    system_msg = next((m["content"] for m in context if m["role"] == "system"), None)
+                    user_msgs = [{"role": m["role"], "content": m["content"]} for m in context if m["role"] != "system"]
+
                     body = {
                         "model": model,
-                        "messages": [{"role": "user", "content": req.message}],
+                        "messages": user_msgs,
                         "max_tokens": req.max_tokens,
                         "stream": True,
                     }
+                    if system_msg:
+                        body["system"] = system_msg
                     # Claude streaming uses SSE with different event types
                     async with client.stream("POST", pc["url"], headers=headers, json=body) as response:
                         response.raise_for_status()
@@ -379,7 +466,7 @@ async def cloud_chat(req: CloudChatRequest):
                                         delta = chunk.get("delta", {})
                                         content = delta.get("text", "")
                                         if content:
-                                            full_response += content
+                                            full_response += str(content)  # type: ignore
                                             payload = json.dumps({"type": "token", "content": content})
                                             yield f"data: {payload}\n\n"
                                     elif event_type == "message_stop":
@@ -404,7 +491,7 @@ async def cloud_chat(req: CloudChatRequest):
             finally:
                 if full_response:
                     conv.add_assistant_message(full_response)
-                    chat_engine._save_conversation(conv)
+                    chat_engine._save_conversation(conv)  # type: ignore
     
     return StreamingResponse(cloud_stream(), media_type="text/event-stream")
 
@@ -423,6 +510,8 @@ async def chat_stream(req: Request, chat_req: ChatRequest):
     if not engine.is_loaded:
         raise HTTPException(status_code=400, detail="No model is currently loaded. Go to Model Manager.")
 
+    assert chat_engine is not None, "Chat engine not initialized"
+    
     # Get or create conversation
     if chat_req.conversation_id:
         conv = chat_engine.get_conversation(chat_req.conversation_id)
@@ -438,7 +527,7 @@ async def chat_stream(req: Request, chat_req: ChatRequest):
         init_payload = json.dumps({"type": "init", "conversation_id": conv.id})
         yield f"data: {init_payload}\n\n"
 
-        full_response = ""
+        full_response: str = ""
         try:
             if context_engine:
                 # Use the Context Intelligence Engine (RAG + Refine + CoT)
@@ -456,10 +545,10 @@ async def chat_stream(req: Request, chat_req: ChatRequest):
                         break
 
                     if event["type"] == "token":
-                        full_response += event["content"]
+                        full_response += str(event["content"])  # type: ignore
                     elif event["type"] == "refine_token":
                         # Replace response with refined version
-                        full_response = event["content"]
+                        full_response = str(event["content"])
 
                     payload = json.dumps(event)
                     yield f"data: {payload}\n\n"
@@ -484,7 +573,8 @@ async def chat_stream(req: Request, chat_req: ChatRequest):
         finally:
             if full_response:
                 conv.add_assistant_message(full_response)
-                chat_engine._save_conversation(conv)
+                # chat_engine was asserted above
+                chat_engine._save_conversation(conv)  # type: ignore
             done_payload = json.dumps({"type": "done"})
             yield f"data: {done_payload}\n\n"
 
@@ -515,7 +605,8 @@ async def upload_to_knowledge_base(file: UploadFile):
             "message": f"Added {chunks_added} chunks from {file.filename}"
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Knowledge base upload error for {file.filename}: {e}")
+        raise HTTPException(status_code=500, detail=builtins.str(e))
 
 
 @app.get("/api/knowledge/sources")
@@ -540,7 +631,8 @@ async def delete_knowledge_source(source_name: str):
         deleted = kb.delete_source(source_name)
         return {"status": "success", "deleted_chunks": deleted}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Knowledge base error for source {source_name}: {e}")
+        raise HTTPException(status_code=500, detail=builtins.str(e))
 
 
 @app.get("/api/knowledge/stats")
@@ -559,17 +651,19 @@ async def get_knowledge_stats():
 
 @app.get("/api/conversations")
 async def list_conversations():
-    return chat_engine.list_conversations()
+    assert chat_engine is not None; return chat_engine.list_conversations()
 
 @app.get("/api/conversations/search")
 async def search_conversations(q: str = ""):
     """Search conversations by title or content."""
+    assert chat_engine is not None
     if not q.strip():
         return chat_engine.list_conversations()
     return chat_engine.search_conversations(q)
 
 @app.get("/api/conversations/{conv_id}")
 async def get_conversation(conv_id: str):
+    assert chat_engine is not None
     conv = chat_engine.get_conversation(conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Not found")
@@ -577,16 +671,142 @@ async def get_conversation(conv_id: str):
 
 @app.delete("/api/conversations/{conv_id}")
 async def delete_conversation(conv_id: str):
+    assert chat_engine is not None
     chat_engine.delete_conversation(conv_id)
     return {"status": "deleted"}
 
-@app.post("/api/models/unload")
-async def unload_model():
-    """Unload the current model to free GPU/RAM."""
-    if not engine.is_loaded:
-        return {"status": "no_model_loaded"}
-    engine.unload()
-    return {"status": "unloaded"}
+@app.get("/api/conversations/{conv_id}/export")
+async def export_conversation(conv_id: str):
+    """Export a conversation as a markdown file."""
+    assert chat_engine is not None
+    conv = chat_engine.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    md = conv.export_markdown()
+    return StreamingResponse(
+        iter([md]),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{conv.title[:50]}.md"'},
+    )
+
+
+# ─── Privacy & Data Management ────────────────────────────────────────────────
+
+def _dir_size(p: Path) -> int:
+    """Get total size of a directory in bytes."""
+    if not p.exists():
+        return 0
+    total = 0
+    for f in p.rglob("*"):
+        if f.is_file():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    return total
+
+@app.get("/api/privacy/info")
+async def privacy_info():
+    """Return data locations and sizes — nothing leaves the machine."""
+    base = config.PERSONAL_LLM_DIR
+    models_dir = config.MODELS_DIR
+    chat_dir = config.CHAT_HISTORY_DIR
+    rag_dir = base / "chromadb"
+    log_dir = base / "logs"
+
+    return {
+        "data_root": str(base),
+        "locations": {
+            "models": {"path": str(models_dir), "size_bytes": _dir_size(models_dir)},
+            "conversations": {"path": str(chat_dir), "size_bytes": _dir_size(chat_dir)},
+            "rag_database": {"path": str(rag_dir), "size_bytes": _dir_size(rag_dir)},
+            "logs": {"path": str(log_dir), "size_bytes": _dir_size(log_dir)},
+        },
+        "network_policy": {
+            "telemetry": False,
+            "auto_update": False,
+            "analytics": False,
+            "outbound_calls": "User-initiated model downloads from HuggingFace only",
+        },
+    }
+
+class WipeRequest(BaseModel):
+    confirm: str
+
+@app.delete("/api/data/wipe")
+async def wipe_all_data(req: WipeRequest):
+    """Securely delete all user data: conversations, RAG database, settings, and logs."""
+    if req.confirm != "DELETE ALL MY DATA":
+        raise HTTPException(status_code=400, detail="Must send confirm='DELETE ALL MY DATA'")
+
+    wiped = []
+    errors = []
+
+    # Unload active model first
+    if engine.is_loaded:
+        engine.unload()
+
+    # Wipe conversations
+    try:
+        chat_dir = config.CHAT_HISTORY_DIR
+        if chat_dir.exists():
+            shutil.rmtree(chat_dir)
+            chat_dir.mkdir(parents=True, exist_ok=True)
+            wiped.append("conversations")
+            # Reload chat engine
+            if chat_engine:
+                chat_engine.conversations.clear()
+    except Exception as e:
+        errors.append(f"conversations: {e}")
+
+    # Wipe RAG database
+    try:
+        rag_dir = config.KNOWLEDGE_DB_DIR
+        if rag_dir.exists():
+            shutil.rmtree(rag_dir)
+            wiped.append("rag_database")
+            if kb:
+                kb._initialized = False
+    except Exception as e:
+        errors.append(f"rag_database: {e}")
+
+    # Wipe documents
+    try:
+        docs_dir = config.PERSONAL_LLM_DIR / "documents"
+        if docs_dir.exists():
+            shutil.rmtree(docs_dir)
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            wiped.append("documents")
+    except Exception as e:
+        errors.append(f"documents: {e}")
+
+    # Wipe settings
+    try:
+        settings_file = config.PERSONAL_LLM_DIR / "settings.json"
+        if settings_file.exists():
+            settings_file.unlink()
+            wiped.append("settings")
+    except Exception as e:
+        errors.append(f"settings: {e}")
+
+    # Wipe logs
+    try:
+        log_dir = config.PERSONAL_LLM_DIR / "logs"
+        if log_dir.exists():
+            shutil.rmtree(log_dir)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            wiped.append("logs")
+    except Exception as e:
+        errors.append(f"logs: {e}")
+
+    return {
+        "status": "success" if not errors else "partial",
+        "wiped": wiped,
+        "errors": errors,
+        "note": "Model files were NOT deleted (use the model manager to remove them individually).",
+    }
+
+# (Duplicate /api/models/unload route removed — canonical version is above)
 
 # ─── Static File Serving (for LAN access from other devices) ─────────────────
 # Serve the Next.js static export so other devices can access the full UI
@@ -599,7 +819,7 @@ def _find_ui_out_dir():
     ]
     # Electron packaged: resources/ui_out
     if hasattr(sys, '_MEIPASS'):
-        candidates.insert(0, Path(sys._MEIPASS) / "ui" / "out")
+        candidates.insert(0, Path(getattr(sys, '_MEIPASS')) / "ui" / "out")
     # Also check process.resourcesPath equivalent
     res_path = os.environ.get("RESOURCES_PATH")
     if res_path:
@@ -621,6 +841,7 @@ if _ui_dir:
     # Serve index.html at root
     @app.get("/", response_class=HTMLResponse)
     async def serve_ui_root():
+        assert _ui_dir is not None
         return FileResponse(str(_ui_dir / "index.html"))
     
     # Serve other static files (favicon, etc.)

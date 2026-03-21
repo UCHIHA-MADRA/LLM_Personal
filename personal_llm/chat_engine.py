@@ -48,7 +48,7 @@ class Conversation:
 
     def get_context_messages(
         self,
-        max_tokens: int = None,
+        max_tokens: Optional[int] = None,
         reserved_tokens: int = 512,
         rag_context: str = ""
     ) -> List[Dict[str, str]]:
@@ -269,8 +269,8 @@ class ChatEngine:
         message: str,
         conversation: Optional[Conversation] = None,
         rag_context: str = "",
-        temperature: float = None,
-        max_tokens: int = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
         stream: bool = True,
     ):
         """

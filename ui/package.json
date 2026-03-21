@@ -1,6 +1,6 @@
 {
   "name": "personal-llm",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "private": true,
   "main": "electron/main.js",
   "description": "Personal LLM — Your Private AI Assistant. Runs 100% on your hardware.",
@@ -71,6 +71,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "out",
+        "to": "ui_out",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -79,6 +86,13 @@
         "portable"
       ],
       "icon": "public/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Personal LLM"
     },
     "mac": {
       "target": [

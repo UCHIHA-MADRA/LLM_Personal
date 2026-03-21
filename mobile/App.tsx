@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -13,11 +13,13 @@ import {
   Modal,
   ScrollView,
   Alert,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { initLlama, type LlamaContext } from 'llama.rn';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ImagePicker from 'expo-image-picker';
 
 // ─── On-Device Models (small enough for phone RAM) ───
 const DEVICE_MODELS = [
@@ -57,9 +59,9 @@ const DEVICE_MODELS = [
 
 // ─── Cloud Models (Gemini & Claude) ───
 const CLOUD_MODELS = [
-  { id: 'gemini-flash', name: 'Gemini 2.0 Flash', provider: 'gemini', model: 'gemini-2.0-flash', description: 'Google\'s fastest model. Great for everyday tasks.' },
-  { id: 'gemini-pro', name: 'Gemini 1.5 Pro', provider: 'gemini', model: 'gemini-1.5-pro', description: 'Google\'s most capable model for complex reasoning.' },
-  { id: 'claude-sonnet', name: 'Claude 3.5 Sonnet', provider: 'claude', model: 'claude-3-5-sonnet-20241022', description: 'Anthropic\'s best all-around model.' },
+  { id: 'gemini-flash', name: 'Gemini 2.0 Flash', provider: 'gemini', model: 'gemini-2.0-flash', description: 'Google\'s fastest model. Great for everyday tasks and vision.' },
+  { id: 'gemini-pro', name: 'Gemini 1.5 Pro', provider: 'gemini', model: 'gemini-1.5-pro', description: 'Google\'s most capable model for complex reasoning and vision.' },
+  { id: 'claude-sonnet', name: 'Claude 3.5 Sonnet', provider: 'claude', model: 'claude-3-5-sonnet-20241022', description: 'Anthropic\'s best all-around model (vision supported).' },
   { id: 'claude-haiku', name: 'Claude 3.5 Haiku', provider: 'claude', model: 'claude-3-5-haiku-20241022', description: 'Fast and affordable Claude model.' },
 ];
 
@@ -76,18 +78,21 @@ const PROVIDER_CONFIG: Record<string, { url: string; format: 'openai' | 'anthrop
 };
 
 type Role = 'user' | 'assistant';
-type Message = { id: string; role: Role; content: string };
+type Message = { id: string; role: Role; content: string; imageBase64?: string; imageUri?: string; mimeType?: string };
 type ChatMode = 'device' | 'cloud';
 
-function AppContent() {
+export function AppContent() {
   const insets = useSafeAreaInsets();
 
   const [messages, setMessages] = useState<Message[]>([
-    { id: '1', role: 'assistant', content: 'Hello! I am your Personal LLM. Ask me anything!' },
+    { id: '1', role: 'assistant', content: 'Hello! I am your Personal LLM. Ask me anything, or send me a photo!' },
   ]);
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isModalVisible, setModalVisible] = useState(false);
+
+  // Attachment state
+  const [attachedImage, setAttachedImage] = useState<{ uri: string; base64: string; mimeType: string } | null>(null);
 
   // Chat mode
   const [chatMode, setChatMode] = useState<ChatMode>('device');
@@ -98,20 +103,19 @@ function AppContent() {
   const [deviceModelName, setDeviceModelName] = useState('');
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [deviceDownloadProgress, setDeviceDownloadProgress] = useState(0);
-  const [isLoadingDevice, setIsLoadingDevice] = useState(false);
+  const [loadingModelId, setLoadingModelId] = useState<string | null>(null);
   const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
 
   // UI States
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isSettingsOpen, setSettingsOpen] = useState(false);
 
-  // Settings (Gemini + Claude keys)
+  // Settings
   const [settings, setSettings] = useState({ gemini_key: '', claude_key: '' });
 
   const flatListRef = useRef<FlatList>(null);
   const modelsDir = `${FileSystem.cacheDirectory}models/`;
 
-  // ── Check which device models are already downloaded ──
   const checkDownloadedModels = async () => {
     try {
       const dirInfo = await FileSystem.getInfoAsync(modelsDir);
@@ -121,7 +125,7 @@ function AppContent() {
         return;
       }
       const files = await FileSystem.readDirectoryAsync(modelsDir);
-      setDownloadedModels(files.filter(f => f.endsWith('.gguf')));
+      setDownloadedModels(files.filter((f: string) => f.endsWith('.gguf')));
     } catch {
       setDownloadedModels([]);
     }
@@ -131,7 +135,6 @@ function AppContent() {
     checkDownloadedModels();
   }, []);
 
-  // ── Download model to phone storage ──
   const downloadDeviceModel = async (model: typeof DEVICE_MODELS[0]) => {
     setDownloadingModelId(model.id);
     setDeviceDownloadProgress(0);
@@ -153,7 +156,7 @@ function AppContent() {
       const result = await download.downloadAsync();
       if (result && result.uri) {
         await checkDownloadedModels();
-        Alert.alert('Download Complete', `${model.name} is ready to use! Tap "Load & Run" to start chatting.`);
+        Alert.alert('Download Complete', `${model.name} is ready! Tap "Load & Run".`);
       }
     } catch (e: any) {
       Alert.alert('Download Failed', e.message || 'Unknown error');
@@ -162,44 +165,61 @@ function AppContent() {
     }
   };
 
-  // ── Load model into llama.rn context ──
   const loadDeviceModel = async (model: typeof DEVICE_MODELS[0]) => {
-    setIsLoadingDevice(true);
+    setLoadingModelId(model.id);
     try {
       if (llamaContext) {
-        await llamaContext.release();
-        setLlamaContext(null);
+        try {
+          await llamaContext.release();
+        } catch (e) {
+          console.warn('Error releasing previous context:', e);
+        } finally {
+          setLlamaContext(null); // Always clear the state, even if release throws
+        }
+        // Wait for native memory to be freed before loading the new model
+        await new Promise(r => setTimeout(r, 500));
       }
-      const modelPath = modelsDir + model.filename;
+      
+      let modelPath = modelsDir + model.filename;
+      if (modelPath.startsWith('file://')) {
+        modelPath = modelPath.replace('file://', '');
+      }
+      
+      console.log('[LLM] Loading model from:', modelPath);
       const context = await initLlama({
         model: modelPath,
         n_ctx: 2048,
         n_batch: 512,
         n_threads: 4,
-        use_mlock: true,
+        use_mlock: false, // safer for android
       });
       setLlamaContext(context);
       setDeviceModelName(model.name);
       setChatMode('device');
       setModalVisible(false);
-      Alert.alert('Model Loaded', `${model.name} is now running on your phone!`);
+      Alert.alert('Model Loaded', `${model.name} is running!`);
     } catch (e: any) {
-      Alert.alert('Load Failed', e.message || 'Could not load model. Try a smaller one.');
+      console.error('[LLM] Load error:', e);
+      Alert.alert('Load Failed', `${e.message || 'Unknown error'}\n\nPath: ${modelsDir + model.filename}\n\nTry deleting and re-downloading.`);
     } finally {
-      setIsLoadingDevice(false);
+      setLoadingModelId(null);
     }
   };
 
-  // ── Delete a downloaded model ──
   const deleteDeviceModel = async (filename: string) => {
-    Alert.alert('Delete Model', `Remove ${filename} from your phone?`, [
+    Alert.alert('Delete Model', `Remove from phone?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive', onPress: async () => {
           try {
             await FileSystem.deleteAsync(modelsDir + filename);
             await checkDownloadedModels();
-          } catch { }
+            if (llamaContext && deviceModelName === DEVICE_MODELS.find(m => m.filename === filename)?.name) {
+              try { await llamaContext.release(); } catch {}
+              setLlamaContext(null);
+              setDeviceModelName('');
+            }
+          } catch {}
         }
       },
     ]);
@@ -210,14 +230,58 @@ function AppContent() {
     setSidebarOpen(false);
   };
 
-  // ── On-Device Chat (runs entirely on phone) ──
-  const handleDeviceChat = async (userMessage: string, asstId: string) => {
+  // ── Image Picker ──
+  const pickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.5,
+      base64: true,
+    });
+
+    if (!result.canceled && result.assets[0].base64) {
+      const asset = result.assets[0];
+      setAttachedImage({
+        uri: asset.uri,
+        base64: asset.base64 as string,
+        mimeType: asset.mimeType || 'image/jpeg',
+      });
+    }
+  };
+
+  const clearAttachment = () => setAttachedImage(null);
+
+  // ── On-Device Chat ──
+  const handleDeviceChat = async (userMessage: string, asstId: string, hasImage: boolean) => {
     if (!llamaContext) {
-      setMessages(prev =>
-        prev.map(msg =>
-          msg.id === asstId ? { ...msg, content: '⚠️ No model loaded.\n\nTap the 🧠 header → select a 📱 On-Device model → Download → Load.' } : msg
-        )
-      );
+      setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: '⚠️ No model loaded. Tap the 🧠 header.' } : msg));
+      return;
+    }
+    if (hasImage) {
+      // On-device models don't support vision — append a note but still process the text
+      const imageNote = '⚠️ Note: The on-device model cannot analyze images. Responding to your text only.\n\n';
+      try {
+        const prompt = `<|im_start|>system\nYou are a helpful AI assistant. The user tried to share an image, but this model does not support vision. Respond helpfully to their text message.<|im_end|>\n<|im_start|>user\n${userMessage}<|im_end|>\n<|im_start|>assistant\n`;
+
+        setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: imageNote } : msg));
+
+        const result = await llamaContext.completion({
+          prompt,
+          n_predict: 512,
+          stop: ['<|im_end|>', '<|im_start|>'],
+          temperature: 0.7,
+        }, (data: any) => {
+          if (data.token) {
+            setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: imageNote + msg.content.slice(imageNote.length) + data.token } : msg));
+          }
+        });
+
+        if (result && result.text) {
+          setMessages(prev => prev.map(msg => msg.id === asstId && msg.content === imageNote ? { ...msg, content: imageNote + result.text.trim() } : msg));
+        }
+      } catch (e: any) {
+        setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ Inference error: ${e.message}` } : msg));
+      }
       return;
     }
     try {
@@ -230,113 +294,146 @@ function AppContent() {
         temperature: 0.7,
       }, (data: any) => {
         if (data.token) {
-          setMessages(prev =>
-            prev.map(msg =>
-              msg.id === asstId ? { ...msg, content: msg.content + data.token } : msg
-            )
-          );
+          setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: msg.content + data.token } : msg));
         }
       });
 
       if (result && result.text) {
-        setMessages(prev =>
-          prev.map(msg =>
-            msg.id === asstId && !msg.content ? { ...msg, content: result.text.trim() } : msg
-          )
-        );
+        setMessages(prev => prev.map(msg => msg.id === asstId && !msg.content ? { ...msg, content: result.text.trim() } : msg));
       }
     } catch (e: any) {
-      setMessages(prev =>
-        prev.map(msg =>
-          msg.id === asstId ? { ...msg, content: `⚠️ Inference error: ${e.message}` } : msg
-        )
-      );
+      setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ Inference error: ${e.message}` } : msg));
     }
   };
 
-  // ── Cloud Chat (Gemini / Claude — direct from phone) ──
-  const handleCloudChat = async (userMessage: string, asstId: string) => {
+  // ── Cloud Chat ──
+  const handleCloudChat = async (userMessage: string, asstId: string, imageObj: typeof attachedImage) => {
     const provider = selectedCloudModel.provider;
     const apiKey = provider === 'gemini' ? settings.gemini_key : settings.claude_key;
     if (!apiKey || apiKey.includes('*')) {
-      setMessages(prev =>
-        prev.map(msg =>
-          msg.id === asstId ? {
-            ...msg, content: provider === 'gemini'
-              ? '⚠️ No Gemini API key.\n\nGo to ⚙️ Settings and enter your key.\nGet one free at aistudio.google.com'
-              : '⚠️ No Claude API key.\n\nGo to ⚙️ Settings and enter your key.\nGet one at console.anthropic.com'
-          } : msg
-        )
-      );
+      setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ No ${provider} API key configured.` } : msg));
       return;
     }
 
     const config = PROVIDER_CONFIG[provider];
-    const chatHistory = messages.filter(m => m.content && !m.content.startsWith('⚠️')).map(m => ({ role: m.role, content: m.content }));
-    chatHistory.push({ role: 'user', content: userMessage });
+    
+    // Format chat history for provider constraints
+    const formattedMessages = messages
+      .filter(m => m.content && !m.content.startsWith('⚠️'))
+      .map(m => {
+        // Transform past messages with images if needed
+        if (m.imageBase64 && m.mimeType) {
+          if (config.format === 'openai') {
+            return {
+              role: m.role,
+              content: [
+                { type: 'text', text: m.content || " " },
+                { type: 'image_url', image_url: { url: `data:${m.mimeType};base64,${m.imageBase64}` } }
+              ]
+            };
+          } else if (config.format === 'anthropic') {
+            return {
+              role: m.role,
+              content: [
+                { type: 'image', source: { type: 'base64', media_type: m.mimeType, data: m.imageBase64 } },
+                { type: 'text', text: m.content || " " }
+              ]
+            };
+          }
+        }
+        return { role: m.role, content: m.content };
+      });
+
+    // Handle new message
+    let newUserMessageContent: any = userMessage || " ";
+    if (imageObj) {
+      if (config.format === 'openai') {
+        newUserMessageContent = [
+          { type: 'text', text: userMessage || " " },
+          { type: 'image_url', image_url: { url: `data:${imageObj.mimeType};base64,${imageObj.base64}` } }
+        ];
+      } else if (config.format === 'anthropic') {
+        newUserMessageContent = [
+          { type: 'image', source: { type: 'base64', media_type: imageObj.mimeType, data: imageObj.base64 } },
+          { type: 'text', text: userMessage || " " }
+        ];
+      }
+    }
+    
+    formattedMessages.push({ role: 'user', content: newUserMessageContent });
 
     try {
-      if (config.format === 'openai') {
-        // Gemini — OpenAI-compatible endpoint
-        const response = await fetch(config.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: selectedCloudModel.model,
-            messages: chatHistory.slice(-10),
-            max_tokens: 1024,
-            temperature: 0.7,
-            stream: false,
-          }),
-        });
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({}));
-          setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ ${err?.error?.message || `Gemini API error ${response.status}`}` } : msg));
-          return;
-        }
-        const data = await response.json();
-        setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: data.choices?.[0]?.message?.content || 'No response' } : msg));
+      let bodyData: any = {};
+      let headersConfig: any = { 'Content-Type': 'application/json' };
 
+      if (config.format === 'openai') {
+        headersConfig['Authorization'] = `Bearer ${apiKey}`;
+        bodyData = {
+          model: selectedCloudModel.model,
+          messages: formattedMessages.slice(-10),
+          max_tokens: 1024,
+          temperature: 0.7,
+        };
       } else if (config.format === 'anthropic') {
-        // Claude — Anthropic Messages API
-        const response = await fetch(config.url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: selectedCloudModel.model,
-            messages: chatHistory.slice(-10),
-            max_tokens: 1024,
-            stream: false,
-          }),
-        });
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({}));
-          setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ ${err?.error?.message || `Claude API error ${response.status}`}` } : msg));
-          return;
-        }
-        const data = await response.json();
-        const text = data.content?.[0]?.text || 'No response';
-        setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: text } : msg));
+        headersConfig['x-api-key'] = apiKey;
+        headersConfig['anthropic-version'] = '2023-06-01';
+        bodyData = {
+          model: selectedCloudModel.model,
+          messages: formattedMessages.slice(-10),
+          max_tokens: 1024,
+        };
       }
+
+      const response = await fetch(config.url, {
+        method: 'POST',
+        headers: headersConfig,
+        body: JSON.stringify(bodyData),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ API error: ${err?.error?.message || response.status}` } : msg));
+        return;
+      }
+      
+      const data = await response.json();
+      let responseText = 'No response';
+      if (config.format === 'openai') responseText = data.choices?.[0]?.message?.content || 'No response';
+      else if (config.format === 'anthropic') responseText = data.content?.[0]?.text || 'No response';
+
+      setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: responseText } : msg));
     } catch (e: any) {
       setMessages(prev => prev.map(msg => msg.id === asstId ? { ...msg, content: `⚠️ Network error: ${e.message}` } : msg));
     }
   };
 
   const handleSend = async () => {
-    if (!input.trim() || isGenerating) return;
+    if ((!input.trim() && !attachedImage) || isGenerating) return;
+    
     const userMessage = input;
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: userMessage };
+    const currentAttachment = attachedImage;
+    
+    const userMsg: Message = { 
+      id: Date.now().toString(), 
+      role: 'user', 
+      content: userMessage,
+      imageBase64: currentAttachment?.base64,
+      imageUri: currentAttachment?.uri,
+      mimeType: currentAttachment?.mimeType
+    };
+    
     const asstId = (Date.now() + 1).toString();
     setMessages(prev => [...prev, userMsg, { id: asstId, role: 'assistant', content: '' }]);
     setInput('');
+    setAttachedImage(null);
     setIsGenerating(true);
-    if (chatMode === 'device') await handleDeviceChat(userMessage, asstId);
-    else await handleCloudChat(userMessage, asstId);
+    
+    if (chatMode === 'device') {
+      await handleDeviceChat(userMessage, asstId, !!currentAttachment);
+    } else {
+      await handleCloudChat(userMessage, asstId, currentAttachment);
+    }
+    
     setIsGenerating(false);
   };
 
@@ -348,6 +445,9 @@ function AppContent() {
           <Text style={styles.avatarText}>{isUser ? '👤' : '🤖'}</Text>
         </View>
         <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleBot]}>
+          {item.imageUri && (
+            <Image source={{ uri: item.imageUri }} style={styles.msgImage} />
+          )}
           {item.content ? (
             <Text style={[styles.msgText, isUser ? styles.msgTextUser : styles.msgTextBot]}>{item.content}</Text>
           ) : isGenerating ? (
@@ -361,7 +461,6 @@ function AppContent() {
   const modeLabel = chatMode === 'device'
     ? `📱 ${deviceModelName || 'No Model'}`
     : `☁️ ${selectedCloudModel.name}`;
-
   const modeColor = chatMode === 'device' ? '#f59e0b' : '#22c55e';
 
   return (
@@ -388,7 +487,7 @@ function AppContent() {
           </TouchableOpacity>
         </View>
 
-        {/* Chat Mode Toggle — 2 modes only */}
+        {/* Chat Mode Toggle */}
         <View style={styles.modeBar}>
           <TouchableOpacity style={[styles.modeBtn, chatMode === 'device' && styles.modeBtnActiveDevice]} onPress={() => setChatMode('device')}>
             <Text style={[styles.modeBtnText, chatMode === 'device' && styles.modeBtnTextActive]}>📱 Device</Text>
@@ -398,7 +497,7 @@ function AppContent() {
           </TouchableOpacity>
         </View>
 
-        {/* Sidebar Drawer */}
+        {/* Sidebar */}
         <Modal visible={isSidebarOpen} animationType="fade" transparent onRequestClose={() => setSidebarOpen(false)}>
           <View style={styles.sidebarOverlay}>
             <View style={[styles.sidebarContent, { paddingTop: insets.top + 10 }]}>
@@ -407,45 +506,37 @@ function AppContent() {
                 <TouchableOpacity onPress={() => setSidebarOpen(false)}><Text style={styles.closeModalText}>✕</Text></TouchableOpacity>
               </View>
               <TouchableOpacity style={styles.newChatBtn} onPress={createNewChat}><Text style={styles.newChatText}>+ New Chat</Text></TouchableOpacity>
-              <Text style={{ color: '#666', fontSize: 13, textAlign: 'center', marginTop: 30 }}>Chat history is kept locally on your device</Text>
             </View>
             <TouchableOpacity style={styles.sidebarCloseArea} onPress={() => setSidebarOpen(false)} />
           </View>
         </Modal>
 
         {/* Settings Modal */}
-        <Modal visible={isSettingsOpen} animationType="slide" transparent onRequestClose={() => setSettingsOpen(false)}>
+        <Modal visible={isSettingsOpen} animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContent, { paddingBottom: insets.bottom + 20 }]}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Settings</Text>
                 <TouchableOpacity onPress={() => setSettingsOpen(false)}><Text style={styles.closeModalText}>✕</Text></TouchableOpacity>
               </View>
-              <ScrollView style={styles.catalogScroll}>
+              <ScrollView>
                 <Text style={styles.sectionTitle}>☁️ Cloud API Keys</Text>
-
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>🔷 Gemini API Key</Text>
-                  <Text style={styles.settingsDesc}>Get a free key at aistudio.google.com</Text>
                   <TextInput style={styles.settingsInput} value={settings.gemini_key} onChangeText={t => setSettings(p => ({ ...p, gemini_key: t }))} placeholder="AIza..." placeholderTextColor="#555" autoCapitalize="none" />
                 </View>
-
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>🟠 Claude API Key</Text>
-                  <Text style={styles.settingsDesc}>Get a key at console.anthropic.com</Text>
                   <TextInput style={styles.settingsInput} value={settings.claude_key} onChangeText={t => setSettings(p => ({ ...p, claude_key: t }))} placeholder="sk-ant-..." placeholderTextColor="#555" autoCapitalize="none" />
                 </View>
-
-                <TouchableOpacity style={styles.saveBtn} onPress={() => setSettingsOpen(false)}>
-                  <Text style={styles.saveBtnText}>Save & Close</Text>
-                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={() => setSettingsOpen(false)}><Text style={styles.saveBtnText}>Save</Text></TouchableOpacity>
               </ScrollView>
             </View>
           </View>
         </Modal>
 
         {/* Model Selection Modal */}
-        <Modal visible={isModalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
+        <Modal visible={isModalVisible} animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContent, { paddingBottom: insets.bottom + 20 }]}>
               <View style={styles.modalHeader}>
@@ -453,97 +544,42 @@ function AppContent() {
                 <TouchableOpacity onPress={() => setModalVisible(false)}><Text style={styles.closeModalText}>✕</Text></TouchableOpacity>
               </View>
               <ScrollView style={styles.catalogScroll}>
-
-                {/* First-use guide */}
-                {!llamaContext && !settings.gemini_key && !settings.claude_key && (
-                  <View style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 14, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#f59e0b' }}>
-                    <Text style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: 14, marginBottom: 6 }}>👋 Getting Started</Text>
-                    <Text style={{ color: '#94a3b8', fontSize: 13, lineHeight: 20 }}>{'Choose how to chat:\n\n📱 Device — Download a model (229 MB+) to run offline on your phone\n\n☁️ Cloud — Use Gemini (free) or Claude API for powerful AI'}</Text>
-                  </View>
-                )}
-
-                {/* On-Device Models */}
-                <Text style={styles.sectionTitle}>📱 On-Device Models (runs on your phone)</Text>
-                <Text style={styles.settingsDesc}>Download once, works completely offline. No internet needed!</Text>
+                <Text style={styles.sectionTitle}>📱 On-Device Models</Text>
                 {DEVICE_MODELS.map(model => {
                   const isOnPhone = downloadedModels.includes(model.filename);
                   const isActive = llamaContext && deviceModelName === model.name;
+                  const isThisLoading = loadingModelId === model.id;
                   return (
                     <View key={model.id} style={[styles.modelCardDownloaded, isActive && { borderColor: '#f59e0b', borderWidth: 2 }]}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                         <Text style={styles.modelName}>{model.name}</Text>
                         <Text style={styles.sizeBadge}>{model.size_mb < 1000 ? `${model.size_mb} MB` : `${(model.size_mb / 1024).toFixed(1)} GB`}</Text>
                       </View>
                       <Text style={styles.modelDesc}>{model.description}</Text>
-                      {isActive && <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: 'bold', marginTop: 4 }}>✓ Running on device</Text>}
+                      {isActive && <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: 'bold' }}>✓ Running</Text>}
                       {isOnPhone ? (
                         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                          <TouchableOpacity
-                            style={[styles.loadBtn, { flex: 1 }, (isLoadingDevice) && styles.loadBtnDisabled]}
-                            onPress={() => loadDeviceModel(model)}
-                            disabled={isLoadingDevice}
-                          >
-                            <Text style={styles.loadBtnText}>{isLoadingDevice ? '⏳ Loading...' : '▶ Load & Run'}</Text>
+                          <TouchableOpacity style={[styles.loadBtn, { flex: 1 }, isThisLoading && styles.loadBtnDisabled]} onPress={() => loadDeviceModel(model)} disabled={isThisLoading}>
+                            <Text style={styles.loadBtnText}>{isThisLoading ? '⏳ Loading...' : '▶ Load & Run'}</Text>
                           </TouchableOpacity>
-                          <TouchableOpacity style={styles.deleteBtn} onPress={() => deleteDeviceModel(model.filename)}>
-                            <Text style={styles.deleteBtnText}>🗑</Text>
-                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.deleteBtn} onPress={() => deleteDeviceModel(model.filename)}><Text style={styles.deleteBtnText}>🗑</Text></TouchableOpacity>
                         </View>
                       ) : (
-                        <TouchableOpacity
-                          style={[styles.downloadBtn, downloadingModelId === model.id && styles.loadBtnDisabled]}
-                          onPress={() => downloadDeviceModel(model)}
-                          disabled={downloadingModelId !== null}
-                        >
-                          <Text style={styles.downloadBtnText}>
-                            {downloadingModelId === model.id ? `⬇ ${(deviceDownloadProgress * 100).toFixed(0)}%` : `⬇ Download (${model.size_mb < 1000 ? `${model.size_mb} MB` : `${(model.size_mb / 1024).toFixed(1)} GB`})`}
-                          </Text>
+                        <TouchableOpacity style={[styles.downloadBtn, downloadingModelId === model.id && styles.loadBtnDisabled]} onPress={() => downloadDeviceModel(model)} disabled={downloadingModelId !== null}>
+                          <Text style={styles.downloadBtnText}>{downloadingModelId === model.id ? `⬇ ${(deviceDownloadProgress * 100).toFixed(0)}%` : `⬇ Download`}</Text>
                         </TouchableOpacity>
-                      )}
-                      {downloadingModelId === model.id && (
-                        <View style={styles.progressBarBg}>
-                          <View style={[styles.progressBarFill, { width: `${Math.max(deviceDownloadProgress * 100, 2)}%` as any }]} />
-                        </View>
                       )}
                     </View>
                   );
                 })}
 
-                {/* Cloud Models */}
-                <Text style={styles.sectionTitle}>☁️ Cloud Models (via API)</Text>
-                <Text style={styles.settingsDesc}>Powerful AI models. Gemini offers free usage. Claude requires a paid key.</Text>
+                <Text style={styles.sectionTitle}>☁️ Cloud Models</Text>
                 {CLOUD_MODELS.map(model => {
-                  const needsKey = model.provider === 'gemini' ? !settings.gemini_key : !settings.claude_key;
                   const isSelected = selectedCloudModel.id === model.id && chatMode === 'cloud';
                   return (
-                    <TouchableOpacity
-                      key={model.id}
-                      style={[styles.modelCardAvailable, isSelected && { borderColor: '#22c55e', borderWidth: 2 }]}
-                      onPress={() => {
-                        if (needsKey) {
-                          Alert.alert(
-                            'API Key Required',
-                            model.provider === 'gemini'
-                              ? 'You need a Gemini API key.\n\n1. Go to aistudio.google.com\n2. Click "Get API key"\n3. Copy and paste it in Settings'
-                              : 'You need a Claude API key.\n\n1. Go to console.anthropic.com\n2. Create an API key\n3. Paste it in Settings',
-                            [{ text: 'Open Settings', onPress: () => { setModalVisible(false); setSettingsOpen(true); } }, { text: 'Cancel' }]
-                          );
-                          return;
-                        }
-                        setSelectedCloudModel(model); setChatMode('cloud'); setModalVisible(false);
-                      }}
-                    >
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Text style={styles.modelName}>{model.name}</Text>
-                        <View style={{ flexDirection: 'row', gap: 6 }}>
-                          {needsKey && <View style={{ backgroundColor: '#7f1d1d', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ color: '#fca5a5', fontSize: 10, fontWeight: 'bold' }}>KEY NEEDED</Text></View>}
-                          {model.provider === 'gemini' && <View style={styles.freeBadge}><Text style={styles.freeBadgeText}>FREE TIER</Text></View>}
-                        </View>
-                      </View>
+                    <TouchableOpacity key={model.id} style={[styles.modelCardAvailable, isSelected && { borderColor: '#22c55e', borderWidth: 2 }]} onPress={() => { setSelectedCloudModel(model); setChatMode('cloud'); setModalVisible(false); }}>
+                      <Text style={styles.modelName}>{model.name}</Text>
                       <Text style={styles.modelDesc}>{model.description}</Text>
-                      <Text style={{ color: model.provider === 'gemini' ? '#4285F4' : '#D97706', fontSize: 11, fontWeight: 'bold', marginTop: 2 }}>
-                        {model.provider === 'gemini' ? '🔷 Google Gemini' : '🟠 Anthropic Claude'}
-                      </Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -562,9 +598,22 @@ function AppContent() {
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
-        {/* Input */}
+        {/* Input Area with Attachment Preview */}
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          {attachedImage && (
+            <View style={styles.attachmentPreviewContainer}>
+              <View style={styles.attachmentBadge}>
+                <Image source={{ uri: attachedImage.uri }} style={styles.attachmentImage} />
+                <TouchableOpacity style={styles.attachmentClear} onPress={clearAttachment}>
+                  <Text style={{color: 'white', fontSize: 12, fontWeight: 'bold'}}>X</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           <View style={styles.inputBar}>
+            <TouchableOpacity onPress={pickImage} style={styles.attachBtn}>
+              <Text style={styles.attachBtnText}>📎</Text>
+            </TouchableOpacity>
             <TextInput
               style={styles.textInput}
               value={input}
@@ -576,9 +625,9 @@ function AppContent() {
               editable={!isGenerating}
             />
             <TouchableOpacity
-              style={[styles.sendBtn, (!input.trim() || isGenerating) && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, (!input.trim() && !attachedImage || isGenerating) && styles.sendBtnDisabled]}
               onPress={handleSend}
-              disabled={!input.trim() || isGenerating}
+              disabled={(!input.trim() && !attachedImage) || isGenerating}
             >
               <Text style={styles.sendBtnText}>▶</Text>
             </TouchableOpacity>
@@ -628,11 +677,18 @@ const styles = StyleSheet.create({
   msgText: { fontSize: 14, lineHeight: 20 },
   msgTextUser: { color: '#fff' },
   msgTextBot: { color: '#e2e8f0' },
+  msgImage: { width: 200, height: 200, borderRadius: 12, marginBottom: 8, resizeMode: 'cover' },
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', backgroundColor: 'rgba(11,14,20,0.95)' },
   textInput: { flex: 1, backgroundColor: '#151923', color: '#fff', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 100, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   sendBtn: { width: 42, height: 42, borderRadius: 14, backgroundColor: '#4f46e5', alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   sendBtnDisabled: { backgroundColor: '#333' },
   sendBtnText: { color: '#fff', fontSize: 16 },
+  attachBtn: { width: 42, height: 42, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+  attachBtnText: { color: '#aaa', fontSize: 18 },
+  attachmentPreviewContainer: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: 'rgba(11,14,20,0.95)', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
+  attachmentBadge: { width: 60, height: 60, borderRadius: 8, backgroundColor: '#151923' },
+  attachmentImage: { width: '100%', height: '100%', borderRadius: 8, resizeMode: 'cover' },
+  attachmentClear: { position: 'absolute', top: -5, right: -5, backgroundColor: '#ef4444', width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#0B0E14', borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '88%', padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)', paddingBottom: 12 },
@@ -645,8 +701,6 @@ const styles = StyleSheet.create({
   modelName: { color: '#fff', fontSize: 15, fontWeight: 'bold', marginBottom: 2 },
   modelDesc: { color: '#aaa', fontSize: 12, lineHeight: 16, marginBottom: 4 },
   sizeBadge: { color: '#f59e0b', fontSize: 11, fontWeight: 'bold', backgroundColor: 'rgba(245,158,11,0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
-  freeBadge: { backgroundColor: '#22c55e', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
-  freeBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
   loadBtn: { backgroundColor: '#4f46e5', paddingVertical: 8, borderRadius: 10, alignItems: 'center' },
   loadBtnDisabled: { opacity: 0.5 },
   loadBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
@@ -654,8 +708,6 @@ const styles = StyleSheet.create({
   downloadBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
   deleteBtn: { backgroundColor: 'rgba(239,68,68,0.2)', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   deleteBtnText: { fontSize: 16 },
-  progressBarBg: { height: 5, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 3, marginTop: 6, overflow: 'hidden' as const },
-  progressBarFill: { height: 5, backgroundColor: '#22c55e', borderRadius: 3 },
   sidebarOverlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.5)' },
   sidebarContent: { width: '80%', maxWidth: 320, backgroundColor: '#0B0E14', height: '100%', padding: 20, borderRightWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   sidebarCloseArea: { flex: 1 },
@@ -663,7 +715,6 @@ const styles = StyleSheet.create({
   sidebarTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   newChatBtn: { backgroundColor: '#4f46e5', padding: 12, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
   newChatText: { color: '#fff', fontWeight: 'bold' },
-  settingsDesc: { color: '#aaa', fontSize: 12, marginBottom: 8, lineHeight: 18 },
   inputGroup: { marginBottom: 14 },
   inputLabel: { color: '#ccc', fontSize: 13, marginBottom: 4, fontWeight: '500' },
   settingsInput: { backgroundColor: '#151923', color: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },

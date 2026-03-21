@@ -3,27 +3,20 @@
 import { Terminal, Download, Shield, Cpu, Zap, Smartphone, Globe, Apple, Monitor, Database, Lock, Settings } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 export default function Home() {
-  const [mounted, setMounted] = useState(false);
   const [powerOn, setPowerOn] = useState(true);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) return null;
-
   return (
-    <div className="min-h-screen bg-[#e5e5e5] text-[#333333] overflow-x-hidden font-sans pb-20">
+    <div className="min-h-screen bg-background text-foreground overflow-x-hidden font-sans pb-20">
 
       {/* Skeuomorphic Navbar / Menu Bar */}
       <nav className="fixed top-0 inset-x-0 z-50 h-16 skeuo-nav px-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           {/* Hardware Logo Button */}
-          <div className="w-10 h-10 rounded-full bg-[#f0f0f0] border-2 border-white shadow-[0_2px_4px_rgba(0,0,0,0.1),inset_0_2px_4px_rgba(0,0,0,0.05)] flex items-center justify-center p-1 cursor-pointer hover:shadow-[0_1px_2px_rgba(0,0,0,0.1),inset_0_2px_6px_rgba(0,0,0,0.1)] active:scale-95 transition-all">
-            <div className="w-full h-full rounded-full bg-gradient-to-b from-[#818cf8] to-[#4f46e5] flex items-center justify-center shadow-inner">
+          <div className="w-10 h-10 rounded-full bg-surface-800 border-2 border-white shadow-[0_2px_4px_rgba(0,0,0,0.1),inset_0_2px_4px_rgba(0,0,0,0.05)] flex items-center justify-center p-1 cursor-pointer hover:shadow-[0_1px_2px_rgba(0,0,0,0.1),inset_0_2px_6px_rgba(0,0,0,0.1)] active:scale-95 transition-all">
+            <div className="w-full h-full rounded-full bg-linear-to-b from-[#818cf8] to-primary-600 flex items-center justify-center shadow-inner">
               <Cpu className="text-white w-4 h-4 shadow-sm" />
             </div>
           </div>
@@ -31,7 +24,7 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="hidden md:flex bg-[#e0e0e0] rounded-full p-1 border border-[#c0c0c0] shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),0_1px_0_white]">
+          <div className="hidden md:flex bg-surface-900 rounded-full p-1 border border-[#c0c0c0] shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),0_1px_0_white]">
             <a href="#features" className="px-4 py-1.5 rounded-full text-sm font-bold text-[#555] hover:bg-[#d5d5d5] hover:shadow-inner transition-all hover:text-[#333] skeuo-text">Specs</a>
             <Link href="/model" className="px-4 py-1.5 rounded-full text-sm font-bold text-[#555] hover:bg-[#d5d5d5] hover:shadow-inner transition-all hover:text-[#333] skeuo-text">Models</Link>
           </div>
@@ -55,14 +48,14 @@ export default function Home() {
 
             {/* Left Column: Copy & Actions */}
             <div className="flex-1 text-center lg:text-left space-y-8">
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-md skeuo-inset border border-[#c0c0c0] bg-[#e5e5e5]">
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-md skeuo-inset border border-[#c0c0c0] bg-background">
                 <div className="w-2 h-2 rounded-full bg-green-500 shadow-[inset_0_1px_1px_rgba(0,0,0,0.5),0_0_5px_rgba(34,197,94,0.5)]"></div>
                 <span className="text-xs font-bold text-[#666] uppercase tracking-wider skeuo-text">Version 2.1 Online</span>
               </div>
 
               <h1 className="text-5xl md:text-7xl font-black tracking-tighter text-[#222] leading-[1.05] skeuo-text space-y-2">
                 <span className="block">Your Setup.</span>
-                <span className="block text-[#4f46e5]">Your AI.</span>
+                <span className="block text-primary-600">Your AI.</span>
               </h1>
 
               <p className="text-lg md:text-xl text-[#555] leading-relaxed max-w-xl mx-auto lg:mx-0 font-medium skeuo-text">
@@ -83,7 +76,7 @@ export default function Home() {
                     </div>
                     <span>Download Installer</span>
                   </a>
-                  <div className="flex items-center gap-3 px-3 py-1.5 rounded-md skeuo-inset bg-[#e0e0e0] border border-[#ccc]">
+                  <div className="flex items-center gap-3 px-3 py-1.5 rounded-md skeuo-inset bg-surface-900 border border-[#ccc]">
                     <span className="text-xs font-bold text-[#666] flex items-center gap-1"><Monitor className="w-3.5 h-3.5" /> WIN</span>
                     <div className="w-px h-3 bg-[#ccc]"></div>
                     <span className="text-xs font-bold text-[#666] flex items-center gap-1"><Apple className="w-3.5 h-3.5" /> MAC</span>
@@ -96,9 +89,9 @@ export default function Home() {
                 <div className="flex flex-col items-center lg:items-start gap-3 w-full sm:w-auto mt-4 sm:mt-0">
                   <a
                     href="https://expo.dev/artifacts/eas/8DKCxfvW5a9864d5YUJBpc.apks"
-                    className="w-full sm:w-auto px-8 py-5 rounded-xl skeuo-button font-bold text-lg flex items-center justify-center gap-3 group bg-[#f0f0f0]"
+                    className="w-full sm:w-auto px-8 py-5 rounded-xl skeuo-button font-bold text-lg flex items-center justify-center gap-3 group bg-surface-800"
                   >
-                    <div className="bg-[#e0e0e0] p-1.5 rounded text-[#444] border border-[#c0c0c0] shadow-inner drop-shadow-sm">
+                    <div className="bg-surface-900 p-1.5 rounded text-[#444] border border-[#c0c0c0] shadow-inner drop-shadow-sm">
                       <Smartphone className="w-5 h-5 group-hover:-translate-y-0.5 transition-transform" />
                     </div>
                     <span>Get Android APK</span>
@@ -117,13 +110,13 @@ export default function Home() {
                 initial={{ rotateX: 10, rotateY: -10, y: 20 }}
                 animate={{ rotateX: 0, rotateY: 0, y: 0 }}
                 transition={{ duration: 1, type: "spring" }}
-                className="w-full aspect-[4/3] rounded-2xl skeuo-metal p-5 flex flex-col shadow-2xl relative"
+                className="w-full aspect-4/3 rounded-2xl skeuo-metal p-5 flex flex-col shadow-2xl relative"
               >
                 {/* Hardware details: Screws */}
-                <div className="absolute top-3 left-3 w-2 h-2 rounded-full bg-[#bbb] border border-[#999] shadow-[inset_1px_1px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.5)] flex items-center justify-center"><div className="w-[1px] h-full bg-[#888] rotate-45"></div></div>
-                <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-[#bbb] border border-[#999] shadow-[inset_1px_1px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.5)] flex items-center justify-center"><div className="w-[1px] h-full bg-[#888] -rotate-[30deg]"></div></div>
-                <div className="absolute bottom-3 left-3 w-2 h-2 rounded-full bg-[#bbb] border border-[#999] shadow-[inset_1px_1px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.5)] flex items-center justify-center"><div className="w-[1px] h-full bg-[#888] rotate-12"></div></div>
-                <div className="absolute bottom-3 right-3 w-2 h-2 rounded-full bg-[#bbb] border border-[#999] shadow-[inset_1px_1px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.5)] flex items-center justify-center"><div className="w-[1px] h-full bg-[#888] rotate-90"></div></div>
+                <div className="absolute top-3 left-3 w-2 h-2 rounded-full bg-[#bbb] border border-[#999] shadow-[inset_1px_1px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.5)] flex items-center justify-center"><div className="w-px h-full bg-[#888] rotate-45"></div></div>
+                <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-[#bbb] border border-[#999] shadow-[inset_1px_1px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.5)] flex items-center justify-center"><div className="w-px h-full bg-[#888] -rotate-30"></div></div>
+                <div className="absolute bottom-3 left-3 w-2 h-2 rounded-full bg-[#bbb] border border-[#999] shadow-[inset_1px_1px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.5)] flex items-center justify-center"><div className="w-px h-full bg-[#888] rotate-12"></div></div>
+                <div className="absolute bottom-3 right-3 w-2 h-2 rounded-full bg-[#bbb] border border-[#999] shadow-[inset_1px_1px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.5)] flex items-center justify-center"><div className="w-px h-full bg-[#888] rotate-90"></div></div>
 
                 {/* Device Bezel */}
                 <div className="flex-1 leather-texture rounded-xl p-3 flex flex-col relative z-10 shadow-inner">
@@ -134,7 +127,7 @@ export default function Home() {
                       <span>MEM: 14.2/32GB</span>
                     </div>
                     <div className="space-y-3 text-[#a7f3d0] flex-1 overflow-hidden">
-                      <p><span className="text-[#93c5fd]">›</span> init model 'llama-3-8b-instruct'</p>
+                      <p><span className="text-[#93c5fd]">›</span> init model &apos;llama-3-8b-instruct&apos;</p>
                       <p className="text-[#cbd5e1] text-xs">[OK] System memory mapped</p>
                       <p className="text-[#cbd5e1] text-xs">[OK] GPU layers: 33/33 (VRAM mapping)</p>
                       <br />
@@ -155,6 +148,7 @@ export default function Home() {
                     {/* Power Switch */}
                     <button
                       onClick={() => setPowerOn(!powerOn)}
+                      translate="no"
                       className={`w-12 h-6 rounded-full border-2 transition-colors relative shadow-inner flex items-center px-1 ${powerOn ? 'bg-green-500 border-green-600' : 'bg-[#a0a0a0] border-[#909090]'}`}
                     >
                       <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${powerOn ? 'translate-x-[20px]' : 'translate-x-0'}`}></div>
@@ -183,7 +177,7 @@ export default function Home() {
         <div id="features" className="w-full">
           <div className="flex items-center gap-4 mb-8 pl-4">
             <h2 className="text-2xl font-black text-[#333] uppercase tracking-tight skeuo-text">Hardware Specs</h2>
-            <div className="h-0.5 flex-1 bg-gradient-to-r from-[#ccc] to-transparent shadow-[0_1px_0_white]"></div>
+            <div className="h-0.5 flex-1 bg-linear-to-r from-[#ccc] to-transparent shadow-[0_1px_0_white]"></div>
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -191,31 +185,37 @@ export default function Home() {
               icon={<Database className="w-6 h-6 text-[#555]" />}
               title="Local Vector Engine"
               desc="Drop PDFs and Code files into the app. They are parsed and stored locally in ChromaDB for instant Retrieval-Augmented Generation."
+              serial="HW-7A9B2C4F"
             />
             <HardwareModule
               icon={<Cpu className="w-6 h-6 text-[#555]" />}
               title="Iterative Reasoning"
               desc="Deep Think mode enables the model to create a self-correction loop, analyzing its own output for flaws before responding."
+              serial="HW-3X8M5K"
             />
             <HardwareModule
               icon={<Shield className="w-6 h-6 text-[#555]" />}
               title="Air-Gapped Security"
               desc="No API keys required. No internet required. 100% of your confidential data remains on your physical disk."
+              serial="HW-1R4V9Z2T"
             />
             <HardwareModule
               icon={<Terminal className="w-6 h-6 text-[#555]" />}
               title="Python & React Core"
               desc="Built with enterprise-grade tech: FastAPI streaming backend, Next.js Desktop frontend, and React Native mobile."
+              serial="HW-6E2P4L8J"
             />
             <HardwareModule
               icon={<Settings className="w-6 h-6 text-[#555]" />}
               title="Context Adjustments"
               desc="Manually tweak context lengths, system prompts, self-refine depths, and GPU layer offloading directly in settings."
+              serial="HW-9W5H1C7U"
             />
             <HardwareModule
               icon={<Lock className="w-6 h-6 text-[#555]" />}
               title="GGUF Quantization"
               desc="Run models mathematically compressed to 4-bit or 8-bit precision, allowing 32B+ parameter models on consumer hardware."
+              serial="HW-4T7N3Y6A"
             />
           </div>
         </div>
@@ -224,7 +224,7 @@ export default function Home() {
   );
 }
 
-function HardwareModule({ icon, title, desc }: { icon: React.ReactNode, title: string, desc: string }) {
+function HardwareModule({ icon, title, desc, serial }: { icon: React.ReactNode, title: string, desc: string, serial: string }) {
   return (
     <div className="p-6 rounded-2xl skeuo-panel group relative overflow-hidden flex flex-col h-full border border-white">
 
@@ -244,11 +244,11 @@ function HardwareModule({ icon, title, desc }: { icon: React.ReactNode, title: s
       {/* Decorative barcode/serial number */}
       <div className="mt-6 pt-4 border-t border-[#d0d0d0] flex items-center justify-between shadow-[0_1px_0_white]">
         <div className="flex gap-[2px]">
-          <div className="w-[1px] h-3 bg-[#999]"></div><div className="w-[3px] h-3 bg-[#999]"></div><div className="w-[1px] h-3 bg-[#999]"></div>
-          <div className="w-[2px] h-3 bg-[#999]"></div><div className="w-[1px] h-3 bg-[#999]"></div><div className="w-[4px] h-3 bg-[#999]"></div>
-          <div className="w-[1px] h-3 bg-[#999]"></div><div className="w-[2px] h-3 bg-[#999]"></div><div className="w-[1px] h-3 bg-[#999]"></div>
+          <div className="w-px h-3 bg-[#999]"></div><div className="w-[3px] h-3 bg-[#999]"></div><div className="w-px h-3 bg-[#999]"></div>
+          <div className="w-[2px] h-3 bg-[#999]"></div><div className="w-px h-3 bg-[#999]"></div><div className="w-[4px] h-3 bg-[#999]"></div>
+          <div className="w-px h-3 bg-[#999]"></div><div className="w-[2px] h-3 bg-[#999]"></div><div className="w-px h-3 bg-[#999]"></div>
         </div>
-        <span className="text-[9px] font-mono font-bold text-[#888]">{Math.random().toString(36).substring(2, 10).toUpperCase()}</span>
+        <span className="text-[9px] font-mono font-bold text-[#888]">{serial}</span>
       </div>
     </div>
   )

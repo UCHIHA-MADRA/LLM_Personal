@@ -62,10 +62,17 @@ $simplePkgs = @(
     "huggingface-hub",
     "httpx",
     "requests",
+    "starlette",
+    # --- RAG & Parsers ---
+    "chromadb",
+    "sentence-transformers",
     "PyPDF2",
-    "starlette"
+    "python-docx",
+    "openpyxl",
+    "python-pptx",
+    "python-multipart"
 )
-Write-Host "   Installing core packages..." -ForegroundColor Gray
+Write-Host "   Installing core packages and RAG dependencies..." -ForegroundColor Gray
 & $pythonExe -m pip install $simplePkgs --no-warn-script-location --quiet 2>$null
 Write-Host "   Core packages installed." -ForegroundColor Green
 

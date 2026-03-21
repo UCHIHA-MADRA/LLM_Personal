@@ -6,10 +6,11 @@ Uses ChromaDB + sentence-transformers. Everything stored locally.
 
 import os
 import logging
+import builtins
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from . import config
+from . import config  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def _get_chromadb():
     global _chromadb
     if _chromadb is None:
         try:
-            import chromadb
+            import chromadb  # type: ignore
             _chromadb = chromadb
         except ImportError:
             raise ImportError(
@@ -35,7 +36,7 @@ def _get_embedding_model():
     global _sentence_transformer
     if _sentence_transformer is None:
         try:
-            from sentence_transformers import SentenceTransformer
+            from sentence_transformers import SentenceTransformer  # type: ignore
             print(f"📦 Loading embedding model: {config.EMBEDDING_MODEL_NAME}...")
             _sentence_transformer = SentenceTransformer(config.EMBEDDING_MODEL_NAME)
             print("✅ Embedding model loaded.")
@@ -49,6 +50,8 @@ def _get_embedding_model():
 class EmbeddingFunction:
     """ChromaDB-compatible embedding function using sentence-transformers."""
 
+    name: str = "sentence-transformers"  # Required by ChromaDB >= 0.4
+
     def __init__(self):
         self.model = _get_embedding_model()
 
@@ -57,18 +60,18 @@ class EmbeddingFunction:
         return embeddings.tolist()
 
 
-def _chunk_text(text: str, chunk_size: int = None, overlap: int = None) -> List[str]:
+def _chunk_text(text: str, chunk_size: Optional[int] = None, overlap: Optional[int] = None) -> List[str]:
     """Split text into overlapping chunks."""
     chunk_size = chunk_size or config.CHUNK_SIZE
     overlap = overlap or config.CHUNK_OVERLAP
     chunks = []
     start = 0
     while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
+        end = start + chunk_size  # type: ignore[operator]
+        chunk = text[start:end]  # type: ignore[index]
         if chunk.strip():
             chunks.append(chunk.strip())
-        start = end - overlap
+        start = end - overlap  # type: ignore[operator]
     return chunks
 
 
@@ -82,9 +85,9 @@ class KnowledgeBase:
     def __init__(self, db_dir: Optional[str] = None):
         self.db_dir = Path(db_dir) if db_dir else config.KNOWLEDGE_DB_DIR
         self.db_dir.mkdir(parents=True, exist_ok=True)
-        self._client = None
-        self._collection = None
-        self._embedding_fn = None
+        self._client: Any = None
+        self._collection: Any = None
+        self._embedding_fn: Any = None
         self._initialized = False
 
     def _ensure_initialized(self):
@@ -104,7 +107,7 @@ class KnowledgeBase:
         self._initialized = True
         logger.info(f"Knowledge base initialized at {self.db_dir}")
 
-    def add_text(self, text: str, source: str = "manual", metadata: Dict = None):
+    def add_text(self, text: str, source: str = "manual", metadata: Optional[Dict] = None):
         """
         Add raw text to the knowledge base.
 
@@ -135,7 +138,7 @@ class KnowledgeBase:
     def add_file(self, file_path: str) -> int:
         """
         Add a file to the knowledge base.
-        Supports: .txt, .md, .py, .json, .csv, .pdf
+        Supports: .txt, .md, .py, .json, .csv, .pdf, .docx, .xlsx, .pptx
         """
         path = Path(file_path)
         if not path.exists():
@@ -147,6 +150,12 @@ class KnowledgeBase:
 
         if ext == ".pdf":
             text = self._read_pdf(path)
+        elif ext in (".docx", ".doc"):
+            text = self._read_docx(path)
+        elif ext in (".xlsx", ".xls"):
+            text = self._read_xlsx(path)
+        elif ext in (".pptx", ".ppt"):
+            text = self._read_pptx(path)
         elif ext in (".txt", ".md", ".py", ".js", ".ts", ".java", ".cpp",
                       ".c", ".h", ".go", ".rs", ".rb", ".php", ".css",
                       ".html", ".xml", ".yaml", ".yml", ".toml", ".ini",
@@ -173,22 +182,82 @@ class KnowledgeBase:
     def _read_pdf(self, path: Path) -> str:
         """Extract text from a PDF file."""
         try:
-            from PyPDF2 import PdfReader
+            from PyPDF2 import PdfReader  # type: ignore
             reader = PdfReader(str(path))
             pages = []
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    pages.append(text)
+            for i, page in enumerate(reader.pages):
+                try:
+                    text = page.extract_text()
+                    if text:
+                        pages.append(text)
+                except Exception as page_err:
+                    logger.warning(f"Failed to extract text from page {i} of {path.name}: {page_err}")
             return "\n\n".join(pages)
         except ImportError:
             print("⚠️ PyPDF2 not installed. Install it: pip install PyPDF2")
             return ""
         except Exception as e:
-            print(f"❌ Failed to read PDF: {e}")
+            logger.exception(f"PDF extraction failed for {path.name}: {e}")
             return ""
 
-    def query(self, question: str, n_results: int = None) -> str:
+    def _read_docx(self, path: Path) -> str:
+        """Extract text from a DOCX file."""
+        try:
+            from docx import Document  # type: ignore
+            doc = Document(str(path))
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            return "\n\n".join(paragraphs)
+        except ImportError:
+            print("⚠️ python-docx not installed. Install it: pip install python-docx")
+            return ""
+        except Exception as e:
+            print(f"❌ Failed to read DOCX: {e}")
+            return ""
+
+    def _read_xlsx(self, path: Path) -> str:
+        """Extract text from an XLSX file."""
+        try:
+            from openpyxl import load_workbook  # type: ignore
+            wb = load_workbook(str(path), read_only=True, data_only=True)
+            rows = []
+            for sheet in wb.sheetnames:
+                ws = wb[sheet]
+                rows.append(f"[Sheet: {sheet}]")
+                for row in ws.iter_rows(values_only=True):
+                    cells = [str(c) if c is not None else "" for c in row]
+                    if any(cells):
+                        rows.append(" | ".join(cells))
+            wb.close()
+            return "\n".join(rows)
+        except ImportError:
+            print("⚠️ openpyxl not installed. Install it: pip install openpyxl")
+            return ""
+        except Exception as e:
+            print(f"❌ Failed to read XLSX: {e}")
+            return ""
+
+    def _read_pptx(self, path: Path) -> str:
+        """Extract text from a PPTX file."""
+        try:
+            from pptx import Presentation  # type: ignore
+            prs = Presentation(str(path))
+            slides_text = []
+            for i, slide in enumerate(prs.slides, 1):
+                texts = []
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():  # type: ignore[attr-defined]
+                        texts.append(shape.text)  # type: ignore[attr-defined]
+                if texts:
+                    slides_text.append(f"[Slide {i}]\n" + "\n".join(texts))
+            return "\n\n".join(slides_text)
+        except ImportError:
+            print("⚠️ python-pptx not installed. Install it: pip install python-pptx")
+            return ""
+        except Exception as e:
+            print(f"❌ Failed to read PPTX: {e}")
+            return ""
+
+    def query(self, question: str, n_results: Optional[int] = None) -> str:
         """
         Query the knowledge base and return relevant context.
 

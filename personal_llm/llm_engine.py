@@ -88,44 +88,65 @@ class LLMEngine:
             print(f"\n❌ Not a GGUF file: {model_path}")
             return False
 
-        # Unload previous model if any
+        # Unload previous model if any — with delay to let OS release mmap'd memory
+        was_loaded = self._is_loaded
         self.unload()
+        if was_loaded:
+            logger.info("Waiting for previous model memory to be released...")
+            print("   ⏳ Releasing previous model memory...")
+            time.sleep(1.5)  # Give Windows time to release mmap'd file handles
 
-        try:
-            size_gb = model_file.stat().st_size / (1024**3)
-            print(f"\n🔄 Loading model: {model_file.name} ({size_gb:.1f} GB)")
-            print(f"   GPU layers: {'ALL' if n_gpu_layers == -1 else n_gpu_layers}")
-            print(f"   Context: {n_ctx} tokens")
+        size_gb = model_file.stat().st_size / (1024**3)
+        print(f"\n🔄 Loading model: {model_file.name} ({size_gb:.1f} GB)")
+        print(f"   GPU layers: {'ALL' if n_gpu_layers == -1 else n_gpu_layers}")
+        print(f"   Context: {n_ctx} tokens")
 
-            start = time.time()
+        kwargs = {
+            "model_path": str(model_file),
+            "n_gpu_layers": n_gpu_layers,
+            "n_ctx": n_ctx,
+            "verbose": verbose,
+            "n_threads": None,  # auto-detect
+        }
 
-            kwargs = {
-                "model_path": str(model_file),
-                "n_gpu_layers": n_gpu_layers,
-                "n_ctx": n_ctx,
-                "verbose": verbose,
-                "n_threads": None,  # auto-detect
-            }
+        if chat_format:
+            kwargs["chat_format"] = chat_format
 
-            if chat_format:
-                kwargs["chat_format"] = chat_format
+        # Attempt load with retry — Windows may need extra time to release memory
+        max_attempts = 2
+        last_error: Optional[Exception] = None
 
-            self.model = Llama(**kwargs)
-            self.model_path = str(model_file)
-            self.model_name = model_file.stem
-            self._is_loaded = True
+        for attempt in range(1, max_attempts + 1):
+            try:
+                start = time.time()
+                self.model = Llama(**kwargs)
+                self.model_path = str(model_file)
+                self.model_name = model_file.stem
+                self._is_loaded = True
 
-            elapsed = time.time() - start
-            print(f"✅ Model loaded in {elapsed:.1f}s")
-            print(f"   Model: {self.model_name}")
+                elapsed = time.time() - start
+                print(f"✅ Model loaded in {elapsed:.1f}s")
+                print(f"   Model: {self.model_name}")
+                return True
 
-            return True
+            except (MemoryError, OSError) as e:
+                last_error = e
+                logger.warning(f"Load attempt {attempt}/{max_attempts} failed (memory): {e}")
+                if attempt < max_attempts:
+                    print(f"   ⚠️ Memory not yet free, retrying in 3s...")
+                    import gc
+                    gc.collect()
+                    time.sleep(3)
+            except Exception as e:
+                last_error = e
+                logger.error(f"Failed to load model: {e}")
+                break
 
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            print(f"\n❌ Failed to load model: {e}")
-            self._is_loaded = False
-            return False
+        # All attempts failed
+        print(f"\n❌ Failed to load model: {last_error}")
+        self._is_loaded = False
+        self.model = None
+        return False
 
     def unload(self):
         """Unload the current model and free memory."""

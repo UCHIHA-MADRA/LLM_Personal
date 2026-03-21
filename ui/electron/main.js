@@ -9,7 +9,7 @@
  *
  * On first run, auto-installs missing pip packages.
  */
-const { app, BrowserWindow, shell, dialog } = require("electron");
+const { app, BrowserWindow, shell, dialog, Tray, Menu, nativeImage } = require("electron");
 const { spawn, execSync, execFile } = require("child_process");
 const path = require("path");
 const http = require("http");
@@ -26,6 +26,8 @@ const loadUI = serve({ directory: path.join(__dirname, "..", "out") });
 let pythonProcess = null;
 let mainWindow = null;
 let splashWindow = null;
+let tray = null;
+let isQuitting = false; // True when the user explicitly quits (not just closing the window)
 
 // ---- Find Python ----
 function findPython() {
@@ -128,7 +130,7 @@ function installDependencies(pythonExe) {
     }
 
     console.log("Installing:", pkgsToInstall);
-    execSync(`${pythonExe} -m pip install ${pkgsToInstall} --no-warn-script-location`, {
+    execSync(`${pythonExe} -m pip install ${pkgsToInstall} --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --prefer-binary --no-warn-script-location`, {
       timeout: 300000, // 5 min timeout
       windowsHide: true,
       encoding: "utf-8",
@@ -162,27 +164,79 @@ function createSplash() {
 
   const html = `
     <html>
-    <body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;
-      background:linear-gradient(135deg,#0B0E14 0%,#1a1040 50%,#0B0E14 100%);
-      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#fff;
-      border-radius:16px;overflow:hidden;">
-      <div style="text-align:center;padding:40px;">
-        <div style="font-size:48px;margin-bottom:16px;">&#129504;</div>
-        <h1 style="font-size:22px;font-weight:700;margin:0 0 8px 0;">Personal LLM</h1>
-        <p id="status" style="font-size:13px;color:#818cf8;margin:0 0 24px 0;">Starting AI engine...</p>
-        <div style="width:240px;height:6px;background:rgba(255,255,255,0.08);border-radius:100px;margin:0 auto;overflow:hidden;position:relative;">
-          <div style="position:absolute;top:0;left:0;height:100%;width:100%;border-radius:100px;
-            background:linear-gradient(90deg,transparent 0%,#818cf8 40%,#a78bfa 60%,transparent 100%);
-            animation:shimmer 1.8s ease-in-out infinite;"></div>
+    <head>
+      <style>
+        body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh; background: #0B0E14; font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; color:#ffffff; overflow:hidden; border-radius:16px; user-select:none; }
+        .bg-glow { position:absolute; width:300px; height:300px; background:radial-gradient(circle, rgba(99,102,241,0.15) 0%, transparent 70%); top:50%; left:50%; transform:translate(-50%,-50%); border-radius:50%; animation: pulse 4s ease-in-out infinite alternate; pointer-events:none; }
+        .container { position:relative; z-index:10; text-align:center; padding:40px; width: 100%; box-sizing: border-box; }
+        .icon-box { width:72px; height:72px; margin:0 auto 24px; background:linear-gradient(135deg, #4f46e5 0%, #8b5cf6 100%); border-radius:20px; display:flex; items-center; justify-content:center; box-shadow:0 10px 25px rgba(79,70,229,0.4); animation: float 6s ease-in-out infinite; }
+        .icon { font-size:36px; line-height:72px; }
+        h1 { font-size:24px; font-weight:800; margin:0 0 8px 0; letter-spacing:-0.5px; }
+        .version { font-size:11px; color:#6b7280; font-weight:600; text-transform:uppercase; letter-spacing:1px; margin-bottom: 24px; display:block; }
+        .status-container { display:flex; justify-content:space-between; margin-bottom:8px; width:260px; margin-left:auto; margin-right:auto; }
+        #status { font-size:12px; color:#9ca3af; font-weight:500; margin:0; }
+        #percent { font-size:12px; color:#818cf8; font-weight:600; margin:0; }
+        .progress-track { width:260px; height:4px; background:rgba(255,255,255,0.05); border-radius:100px; margin:0 auto; overflow:hidden; position:relative; border: 1px solid rgba(255,255,255,0.05); }
+        .progress-fill { position:absolute; top:0; left:0; height:100%; width:0%; border-radius:100px; background:linear-gradient(90deg, #6366f1 0%, #a855f7 100%); transition: width 0.2s ease-out; box-shadow: 0 0 10px rgba(99,102,241,0.5); }
+        .progress-shimmer { position:absolute; top:0; left:0; height:100%; width:100%; border-radius:100px; background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%); animation: shimmer 1.5s ease-in-out infinite; transform:translateX(-100%); }
+        @keyframes float { 0% { transform: translateY(0px); } 50% { transform: translateY(-8px); } 100% { transform: translateY(0px); } }
+        @keyframes pulse { 0% { opacity: 0.5; transform: translate(-50%,-50%) scale(0.9); } 100% { opacity: 1; transform: translate(-50%,-50%) scale(1.1); } }
+        @keyframes shimmer { 100% { transform: translateX(100%); } }
+      </style>
+    </head>
+    <body>
+      <div class="bg-glow"></div>
+      <div class="container">
+        <div class="icon-box"><div class="icon">&#129504;</div></div>
+        <h1>Personal LLM</h1>
+        <span class="version">Version 2.0.0</span>
+        
+        <div class="status-container">
+          <p id="status">Waking up engine...</p>
+          <p id="percent">0%</p>
+        </div>
+        
+        <div class="progress-track">
+          <div class="progress-fill" id="fill"><div class="progress-shimmer"></div></div>
         </div>
       </div>
+      
+      <script>
+        const statusEl = document.getElementById('status');
+        const percentEl = document.getElementById('percent');
+        const fillEl = document.getElementById('fill');
+        
+        const phases = [
+          {p: 5, t: "Initializing Python runtime..."},
+          {p: 15, t: "Loading FastAPI backend..."},
+          {p: 35, t: "Mounting SQLite context engine..."},
+          {p: 60, t: "Warming up local AI node..."},
+          {p: 85, t: "Connecting to UI renderer..."},
+          {p: 95, t: "Almost ready..."}
+        ];
+        
+        let currentP = 0;
+        let phaseIdx = 0;
+        
+        function updateProgress() {
+          if (phaseIdx < phases.length) {
+            const target = phases[phaseIdx];
+            if (currentP < target.p) {
+              currentP += (Math.random() * 2);
+              if (currentP > target.p) currentP = target.p;
+              
+              fillEl.style.width = currentP + '%';
+              percentEl.innerText = Math.floor(currentP) + '%';
+              statusEl.innerText = target.t;
+            } else {
+              phaseIdx++;
+            }
+          }
+          requestAnimationFrame(updateProgress);
+        }
+        updateProgress();
+      </script>
     </body>
-    <style>
-      @keyframes shimmer {
-        0% { transform: translateX(-100%); }
-        100% { transform: translateX(100%); }
-      }
-    </style>
     </html>`;
 
   splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
@@ -206,6 +260,7 @@ function startPythonBackend(pythonExe) {
       PYTHONIOENCODING: "utf-8",
       RESOURCES_PATH: process.resourcesPath || "",
       ELECTRON_MODE: "1",  // Tells api.py to bind to 127.0.0.1 (no firewall needed)
+      PERSONAL_LLM_DIR: !IS_DEV ? path.join(app.getPath("userData"), "PersonalLLM") : "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -267,7 +322,63 @@ function createWindow() {
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
   loadUI(mainWindow);
+
+  // Minimize to tray instead of closing
+  mainWindow.on("close", (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
   mainWindow.on("closed", () => { mainWindow = null; });
+}
+
+// ---- System Tray ----
+function createTray() {
+  // Use favicon.ico as the tray icon
+  const iconPath = path.join(__dirname, "..", "app", "favicon.ico");
+  let trayIcon;
+  if (fs.existsSync(iconPath)) {
+    trayIcon = nativeImage.createFromPath(iconPath);
+  } else {
+    // Fallback: create a simple 16x16 icon
+    trayIcon = nativeImage.createEmpty();
+  }
+
+  tray = new Tray(trayIcon);
+  tray.setToolTip("Personal LLM — 100% Local AI");
+
+  const contextMenu = Menu.buildFromTemplate([
+    { label: "Show Personal LLM", click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    { type: "separator" },
+    { label: "Quit", click: () => { isQuitting = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(contextMenu);
+  tray.on("double-click", () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
+}
+
+// ---- Graceful Shutdown: unload model before killing Python ----
+function gracefulShutdown() {
+  return new Promise((resolve) => {
+    if (!pythonProcess) { resolve(); return; }
+
+    // Try to unload model via API first
+    const req = http.request(`${API_URL}/api/models/unload`, { method: "POST", timeout: 3000 }, (res) => {
+      console.log("[Shutdown] Model unloaded, status:", res.statusCode);
+      resolve();
+    });
+    req.on("error", () => { resolve(); }); // API might already be down
+    req.on("timeout", () => { req.destroy(); resolve(); });
+    req.end();
+
+    // Hard deadline: 4 seconds max wait
+    setTimeout(resolve, 4000);
+  }).then(() => {
+    if (pythonProcess) {
+      pythonProcess.kill();
+      pythonProcess = null;
+    }
+  });
 }
 
 // ---- App lifecycle ----
@@ -325,6 +436,7 @@ app.whenReady().then(async () => {
 
     // Close splash and show main window
     if (splashWindow) { splashWindow.close(); splashWindow = null; }
+    createTray();
     createWindow();
   } catch (err) {
     console.error("Backend did not start:", err.message);
@@ -401,7 +513,16 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (pythonProcess) { pythonProcess.kill(); pythonProcess = null; }
-  if (process.platform !== "darwin") app.quit();
+  // On macOS, apps stay open until explicitly quit
+  if (process.platform !== "darwin" && isQuitting) app.quit();
 });
-app.on("before-quit", () => { if (pythonProcess) { pythonProcess.kill(); pythonProcess = null; } });
+
+app.on("before-quit", async (e) => {
+  if (pythonProcess) {
+    e.preventDefault();
+    console.log("[Shutdown] Gracefully shutting down...");
+    await gracefulShutdown();
+    if (tray) { tray.destroy(); tray = null; }
+    app.exit(0);
+  }
+});
