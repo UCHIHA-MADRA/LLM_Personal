@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Knowledge Base — RAG system for document Q&A.
 Ingest your documents, ask questions, get answers grounded in your files.

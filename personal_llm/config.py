@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Configuration for Personal LLM system.
 All paths are local — nothing leaves your machine.
@@ -505,8 +506,8 @@ MODEL_CATALOG = {
         "tier": 1,
         "license": "Apache 2.0",
     },
-    "qwen2.5-coder-7b": {
-        "name": "Qwen2.5 Coder 7B Instruct (Q4_K_M)",
+    "qwen2.5.1-coder-7b": {
+        "name": "Qwen2.5.1 Coder 7B Instruct (Q4_K_M)",
         "repo_id": "bartowski/Qwen2.5.1-Coder-7B-Instruct-GGUF",
         "hf_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
         "filename": "Qwen2.5.1-Coder-7B-Instruct-Q4_K_M.gguf",

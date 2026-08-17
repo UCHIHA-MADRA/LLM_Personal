@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 import os
 import sys
 import json
@@ -44,8 +45,8 @@ def get_model_fit_info(hf_id: str):
         # Prevent console window popup on Windows when running as GUI (.exe)
         startupinfo = None
         if os.name == 'nt':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW  # type: ignore[attr-defined]
 
         result = subprocess.run(
             cmd, 

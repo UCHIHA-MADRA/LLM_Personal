@@ -50,7 +50,7 @@ export default function Home() {
             <div className="flex-1 text-center lg:text-left space-y-8">
               <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-md skeuo-inset border border-[#c0c0c0] bg-background">
                 <div className="w-2 h-2 rounded-full bg-green-500 shadow-[inset_0_1px_1px_rgba(0,0,0,0.5),0_0_5px_rgba(34,197,94,0.5)]"></div>
-                <span className="text-xs font-bold text-[#666] uppercase tracking-wider skeuo-text">Version 2.1 Online</span>
+                <span className="text-xs font-bold text-[#666] uppercase tracking-wider skeuo-text">Version 2.0.2 Online</span>
               </div>
 
               <h1 className="text-5xl md:text-7xl font-black tracking-tighter text-[#222] leading-[1.05] skeuo-text space-y-2">

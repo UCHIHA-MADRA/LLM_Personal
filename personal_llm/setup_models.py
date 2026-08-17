@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Setup Models — Interactive tool to download GGUF models for your Personal LLM.
 Run this once to download models, then everything works offline.

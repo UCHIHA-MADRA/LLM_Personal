@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 LLM Engine — The core inference engine.
 Loads GGUF model files directly using llama-cpp-python.

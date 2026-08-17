@@ -20,8 +20,6 @@ Run a powerful AI assistant (like ChatGPT) entirely on your own computer. Your c
 
 ### 1. Clone & Install
 
-### 1. Clone & Install
-
 ```powershell
 git clone https://github.com/UCHIHA-MADRA/LLM_Personal.git
 cd LLM_Personal
@@ -90,7 +88,7 @@ cd ui
 npm run electron:build -- --linux
 ```
 
-*Note: The generated setups will be placed in the `ui/dist-electron/` folder.*
+*Note: The generated setups will be placed in the `ui/dist-electron2/` folder.*
 
 #### 🌐 Option B: Web UI
 
@@ -208,7 +206,9 @@ A: If you don't have a GPU, use a smaller model like **Phi-3 Mini** (2.4 GB). It
 A: Run `pip install -r personal_llm/requirements.txt` and `cd ui && npm install`.
 
 **Q: The port is already in use**
-A: The desktop app auto-finds a free port. The web UI uses port 7865 by default — if that's taken, set a custom one: `set PERSONAL_LLM_PORT=8080` before launching.
+A: The desktop app auto-finds a free port. The web UI uses port 7865 by default — if that's taken, set a custom one:
+- **Windows:** `set PERSONAL_LLM_PORT=8080`
+- **macOS/Linux:** `export PERSONAL_LLM_PORT=8080`
 
 **Q: Where is my data?**
 A: Everything is stored locally:
@@ -225,15 +225,20 @@ LLM_Personal/
 ├── mobile/                     ← React Native Expo Mobile App
 ├── website/                    ← Next.js Launch Website
 ├── launch_personal_llm.py      ← Web UI launcher (browser)
+├── setup.py                    ← Cross-platform interactive setup wizard
 ├── personal_llm.spec           ← PyInstaller build config
+├── .editorconfig               ← Editor formatting rules
+├── .gitignore                  ← Git exclusion rules
 ├── personal_llm/
-│   ├── api.py                  ← FastAPI connection
+│   ├── api.py                  ← FastAPI REST backend
 │   ├── config.py               ← All settings & paths
-│   ├── web_ui.py               ← Gradio interface
+│   ├── web_ui.py               ← Gradio interface (legacy)
 │   ├── llm_engine.py           ← LLM inference engine
 │   ├── chat_engine.py          ← Conversation management
 │   ├── model_manager.py        ← Model download & selection
 │   ├── knowledge_base.py       ← RAG / document search
+│   ├── context_engine.py       ← Context Intelligence (RAG + CoT + Self-Refine)
+│   ├── llmfit_wrapper.py       ← Hardware compatibility scoring
 │   ├── hardware.py             ← GPU/CPU detection
 │   └── requirements.txt        ← Python dependencies
 └── personal_llm_models/        ← Your downloaded .gguf models
@@ -242,3 +247,11 @@ LLM_Personal/
 ## 📚 Advanced Documentation
 
 For technical details, architecture diagrams, and API info, read the [Project Report](PROJECT_REPORT.md).
+
+---
+
+## 📜 Legal
+
+- [MIT License](LICENSE)
+- [Privacy Policy](PRIVACY_POLICY.md) — **TL;DR: Your data never leaves your machine.**
+- [Terms of Service](TERMS_OF_SERVICE.md)

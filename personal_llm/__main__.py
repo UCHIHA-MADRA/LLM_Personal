@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Personal LLM — Module entry point.
 Allows: python -m personal_llm

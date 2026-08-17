@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Chat Engine — Multi-turn conversation management with persistent history.
 Handles system prompts, memory, and session tracking.

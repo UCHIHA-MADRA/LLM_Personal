@@ -1,0 +1,22 @@
+{
+  "site_package_search_strategy": "all",
+  "source_directories": ["."],
+  "search_path": [
+    "C:\\Users\\prabh\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist-electron2",
+    "build",
+    ".git",
+    "**/__pycache__",
+    "website",
+    "mobile"
+  ],
+  "ignore_all_errors": [
+    "personal_llm",
+    "tests"
+  ],
+  "strict": false,
+  "python_version": "3.12"
+}

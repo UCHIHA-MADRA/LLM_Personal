@@ -122,11 +122,19 @@ export default function PersonalLLMApp() {
   const [backendConnected, setBackendConnected] = useState(false)
 
   // API Key states
-  const [apiKeys, setApiKeys] = useState({ gemini_key: "", claude_key: "" })
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>({
+    gemini_key: "", claude_key: "", openai_key: "", mistral_key: "",
+    groq_key: "", cohere_key: "", perplexity_key: "", deepseek_key: "",
+    xai_key: "", together_key: "", fireworks_key: "", openrouter_key: ""
+  })
   const [savedKeysMasked, setSavedKeysMasked] = useState<Record<string, string>>({})
 
   // Privacy Info state
   const [privacyInfo, setPrivacyInfo] = useState<PrivacyInfo | null>(null)
+
+  // Cloud Providers state
+  const [activeCloudProvider, setActiveCloudProvider] = useState<string | null>(null)
+  const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
 
   // Context Intelligence states
   const [useRag, setUseRag] = useState(false)
@@ -182,14 +190,22 @@ export default function PersonalLLMApp() {
       .catch(() => { })
   }, [])
 
+  const fetchProviders = useCallback(() => {
+    fetch(`${API_BASE}/api/providers`)
+      .then(res => res.json())
+      .then(data => setConfiguredProviders(data.configured || []))
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     // Discover the backend port first (in case 8000 was blocked)
     discoverPort().then(() => {
       fetchStatus()
       fetchData()
       fetchSettings()
+      fetchProviders()
     })
-  }, [fetchStatus, fetchData, fetchSettings])
+  }, [fetchStatus, fetchData, fetchSettings, fetchProviders])
 
   // Auto-retry backend connection every 3s when disconnected
   useEffect(() => {
@@ -202,12 +218,13 @@ export default function PersonalLLMApp() {
           setBackendConnected(true)
           fetchData()
           fetchSettings()
+          fetchProviders()
           addToast("Backend connected!", "success")
         })
         .catch(() => { })
     }, 3000)
     return () => clearInterval(interval)
-  }, [backendConnected, fetchData, fetchSettings, addToast])
+  }, [backendConnected, fetchData, fetchSettings, fetchProviders, addToast])
 
   // Auto-scroll chat
   useEffect(() => {
@@ -275,7 +292,7 @@ export default function PersonalLLMApp() {
   // ─── Chat ───
   const handleSend = async () => {
     if (!input.trim() || isGenerating) return
-    if (!status.loaded) {
+    if (!status.loaded && !activeCloudProvider) {
       addToast("No model loaded. Open Settings to load one.", "error")
       return
     }
@@ -306,7 +323,8 @@ export default function PersonalLLMApp() {
           temperature: 0.7,
           use_rag: useRag,
           refine_depth: refineDepth,
-          use_cot: false
+          use_cot: false,
+          provider: activeCloudProvider || undefined
         })
       })
 
@@ -464,8 +482,7 @@ export default function PersonalLLMApp() {
   const handleSaveKeys = async () => {
     try {
       const body: Record<string, string> = {}
-      if (apiKeys.gemini_key) body.gemini_key = apiKeys.gemini_key
-      if (apiKeys.claude_key) body.claude_key = apiKeys.claude_key
+      Object.entries(apiKeys).forEach(([k, v]) => { if (v) body[k] = v })
 
       const res = await fetch(`${API_BASE}/api/settings`, {
         method: "POST",
@@ -474,7 +491,11 @@ export default function PersonalLLMApp() {
       })
       if (res.ok) {
         addToast("API keys saved!", "success")
-        setApiKeys({ gemini_key: "", claude_key: "" })
+        setApiKeys({
+          gemini_key: "", claude_key: "", openai_key: "", mistral_key: "",
+          groq_key: "", cohere_key: "", perplexity_key: "", deepseek_key: "",
+          xai_key: "", together_key: "", fireworks_key: "", openrouter_key: ""
+        })
         fetchSettings()
       } else {
         addToast("Failed to save keys", "error")
@@ -622,6 +643,37 @@ export default function PersonalLLMApp() {
                       )}
                     </div>
 
+                    {/* Cloud AI Providers */}
+                    <div className="mb-6">
+                      <h4 className="flex items-center gap-2 text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-4"><Cloud className="w-4 h-4" /> Cloud AI Providers</h4>
+                      {configuredProviders.length === 0 ? (
+                        <p className="text-sm text-gray-400 p-4 border border-dashed border-white/10 rounded-xl text-center">No API keys saved. Go to the API Keys tab to configure cloud models.</p>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+                          {configuredProviders.map(prov => {
+                            const isThisActive = activeCloudProvider === prov
+                            return (
+                              <div key={prov} className={cn(
+                                "p-4 rounded-xl border transition-colors flex items-center justify-between",
+                                isThisActive ? "border-green-500/30 bg-green-500/5" : "border-indigo-500/20 bg-indigo-500/5 hover:bg-indigo-500/10"
+                              )}>
+                                <div className="flex items-center gap-2">
+                                  <Cloud className="w-4 h-4 text-indigo-400" />
+                                  <span className="font-medium text-white text-sm capitalize">{prov}</span>
+                                  {isThisActive && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">ACTIVE</span>}
+                                </div>
+                                {isThisActive ? (
+                                  <button onClick={() => setActiveCloudProvider(null)} className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-xs rounded-lg transition-colors">Disconnect</button>
+                                ) : (
+                                  <button onClick={() => { setActiveCloudProvider(prov); addToast(`Connected to ${prov}`, "success"); setIsSettingsOpen(false); }} className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-lg transition-colors shadow-lg shadow-indigo-500/20">Connect</button>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Available for Download */}
                     <div>
                       <h4 className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4"><Zap className="w-4 h-4" /> Available To Download</h4>
@@ -689,8 +741,18 @@ export default function PersonalLLMApp() {
                     <p className="text-sm text-gray-400">Connect cloud LLM providers to use alongside your local models. Keys are stored locally and never leave your machine.</p>
 
                     {[
-                      { label: "Gemini", field: "gemini_key" as const, placeholder: "AIza...", icon: "🔷", desc: "Free at aistudio.google.com" },
-                      { label: "Claude", field: "claude_key" as const, placeholder: "sk-ant-...", icon: "🟠", desc: "From console.anthropic.com" },
+                      { label: "Gemini", field: "gemini_key", placeholder: "AIza...", icon: "🔷", desc: "Google AI Studio" },
+                      { label: "Claude", field: "claude_key", placeholder: "sk-ant-...", icon: "🟠", desc: "Anthropic Console" },
+                      { label: "OpenAI", field: "openai_key", placeholder: "sk-...", icon: "◉", desc: "OpenAI Platform" },
+                      { label: "Mistral", field: "mistral_key", placeholder: "...", icon: "▣", desc: "Mistral Console" },
+                      { label: "Groq", field: "groq_key", placeholder: "gsk_...", icon: "⚡", desc: "GroqCloud" },
+                      { label: "Cohere", field: "cohere_key", placeholder: "...", icon: "◆", desc: "Cohere Dashboard" },
+                      { label: "Perplexity", field: "perplexity_key", placeholder: "pplx-...", icon: "◎", desc: "Perplexity API" },
+                      { label: "DeepSeek", field: "deepseek_key", placeholder: "sk-...", icon: "◇", desc: "DeepSeek Platform" },
+                      { label: "xAI", field: "xai_key", placeholder: "xai-...", icon: "✕", desc: "xAI Console" },
+                      { label: "Together", field: "together_key", placeholder: "...", icon: "⊕", desc: "Together API" },
+                      { label: "Fireworks", field: "fireworks_key", placeholder: "...", icon: "🔥", desc: "Fireworks API" },
+                      { label: "OpenRouter", field: "openrouter_key", placeholder: "sk-or-...", icon: "⇄", desc: "OpenRouter.ai" }
                     ].map(provider => (
                       <div key={provider.field} className="p-4 rounded-xl border border-white/5 bg-white/5">
                         <label className="flex items-center gap-2 text-sm font-medium text-white mb-1">
@@ -817,13 +879,17 @@ export default function PersonalLLMApp() {
               <div className="p-4 rounded-xl bg-surface-900/80 border border-white/5">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Model</span>
-                  <div className={cn("w-2 h-2 rounded-full", status.loaded ? "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]" : "bg-red-500")} />
+                  <div className={cn("w-2 h-2 rounded-full", (status.loaded || activeCloudProvider) ? "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]" : "bg-red-500")} />
                 </div>
-                <div className="font-medium text-sm truncate">{status.loaded ? status.name : "No Model Loaded"}</div>
-                {status.loaded && (
+                <div className="font-medium text-sm truncate">{activeCloudProvider ? `☁️ ${activeCloudProvider.toUpperCase()}` : (status.loaded ? status.name : "No Model Loaded")}</div>
+                {status.loaded && !activeCloudProvider ? (
                   <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
                     <span className="flex items-center gap-1.5"><Package className="w-3 h-3" /> {status.size_gb} GB</span>
                     <span className="flex items-center gap-1.5"><Zap className="w-3 h-3" /> {status.context_window} Ctx</span>
+                  </div>
+                ) : activeCloudProvider && (
+                  <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
+                    <span className="flex items-center gap-1.5"><Cloud className="w-3 h-3" /> Cloud API Endpoint</span>
                   </div>
                 )}
               </div>
@@ -887,8 +953,8 @@ export default function PersonalLLMApp() {
             <button onClick={() => setIsSettingsOpen(true)}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-sm transition-colors max-w-[200px]"
             >
-              {backendConnected && <span className={cn("w-2 h-2 rounded-full shrink-0", status.loaded ? "bg-green-500" : "bg-yellow-500")} />}
-              <span className="truncate">{status.loaded ? status.name : "Select Model"}</span> <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
+              {backendConnected && <span className={cn("w-2 h-2 rounded-full shrink-0", (status.loaded || activeCloudProvider) ? "bg-green-500" : "bg-yellow-500")} />}
+              <span className="truncate">{activeCloudProvider ? `☁️ ${activeCloudProvider.toUpperCase()}` : (status.loaded ? status.name : "Select Model")}</span> <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
             </button>
           </div>
         </header>

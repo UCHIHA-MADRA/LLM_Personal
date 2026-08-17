@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Hardware Detection — Detect your PC's specs and recommend models.
 Everything runs on YOUR hardware. This module tells you what fits.

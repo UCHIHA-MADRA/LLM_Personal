@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Personal LLM — Headless API Backend
 Provides REST and SSE endpoints for the new Native Frontend (React/Tauri/Mobile).
@@ -27,6 +28,7 @@ from .chat_engine import ChatEngine
 from .knowledge_base import KnowledgeBase
 from .context_engine import ContextEngine
 from .llmfit_wrapper import get_model_fit_info
+from ._sync import sync_settings, sync_event
 
 # Configure logging — file + console
 _log_dir = config.PERSONAL_LLM_DIR / "logs"
@@ -146,10 +148,20 @@ class DownloadModelRequest(BaseModel):
 class SettingsRequest(BaseModel):
     gemini_key: Optional[str] = None
     claude_key: Optional[str] = None
+    openai_key: Optional[str] = None
+    mistral_key: Optional[str] = None
+    groq_key: Optional[str] = None
+    cohere_key: Optional[str] = None
+    perplexity_key: Optional[str] = None
+    deepseek_key: Optional[str] = None
+    xai_key: Optional[str] = None
+    together_key: Optional[str] = None
+    fireworks_key: Optional[str] = None
+    openrouter_key: Optional[str] = None
 
 class CloudChatRequest(BaseModel):
     message: str
-    provider: str  # "gemini", "claude"
+    provider: str  # "gemini", "claude", "openai", "mistral", "groq", etc.
     model: str = ""
     conversation_id: Optional[str] = None
     temperature: float = 0.7
@@ -169,6 +181,37 @@ async def get_status():
         "port": config.UI_PORT
     }
 
+import time as _time
+_START_TIME = _time.time()
+
+@app.get("/api/health")
+async def health():
+    """System health check — RAM, disk, model status, uptime."""
+    import platform
+    try:
+        import psutil
+        ram = psutil.virtual_memory()
+        ram_used_gb = round(ram.used / 1e9, 1)
+        ram_total_gb = round(ram.total / 1e9, 1)
+        ram_percent = ram.percent
+    except ImportError:
+        ram_used_gb = 0
+        ram_total_gb = 0
+        ram_percent = 0
+    disk = shutil.disk_usage(str(config.MODELS_DIR))
+    return {
+        "status": "ok",
+        "ram_used_gb": ram_used_gb,
+        "ram_total_gb": ram_total_gb,
+        "ram_percent": ram_percent,
+        "disk_free_gb": round(disk.free / 1e9, 1),
+        "model_loaded": engine.is_loaded,
+        "model_name": engine.model_name if engine.is_loaded else None,
+        "uptime_seconds": int(_time.time() - _START_TIME),
+        "python_version": platform.python_version(),
+        "version": "2.0.2",
+    }
+
 # ─── Model Manager Endpoints ──────────────────────────────────────────────────
 
 @app.get("/api/models")
@@ -176,7 +219,8 @@ async def get_models():
     """Get the model catalog, local downloaded models, and hardware fit scores."""
     
     # 1. Local downloaded models
-    assert model_manager is not None, "Model manager not initialized"
+    if model_manager is None:
+        raise HTTPException(status_code=503, detail="Model manager not initialized")
     local_files = model_manager.list_local_models()
     downloaded_filenames = [m["filename"] for m in local_files]
     
@@ -204,13 +248,27 @@ async def get_models():
         "local_models": local_files
     }
 
+# pyre-ignore[21]
+from fastapi import Depends
+
+def get_engine():
+    return engine
+
+def get_model_manager():
+    return model_manager
+
 @app.post("/api/models/load")
-async def load_model(req: LoadModelRequest):
+async def load_model(
+    req: LoadModelRequest,
+    engine=Depends(get_engine),
+    model_manager=Depends(get_model_manager)
+):
     """Load a specific model from disk into the LLM Engine."""
     if not model_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Another model operation is already in progress. Please wait.")
     try:
-        assert model_manager is not None, "Model manager not initialized"
+        if model_manager is None:
+            raise HTTPException(status_code=503, detail="Model manager not initialized")
         path = model_manager.models_dir / req.filename
         if not path.exists():
             raise HTTPException(status_code=404, detail=f"Model file not found: {req.filename}")
@@ -218,7 +276,9 @@ async def load_model(req: LoadModelRequest):
         chat_format = model_manager.get_chat_format(req.filename)
 
         try:
-            success = engine.load(
+            import asyncio
+            success = await asyncio.to_thread(
+                engine.load,
                 str(path),
                 n_gpu_layers=config.N_GPU_LAYERS,
                 n_ctx=config.CONTEXT_SIZE,
@@ -255,12 +315,13 @@ async def delete_model(filename: str):
     if not model_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Another model operation is in progress.")
     try:
-        assert model_manager is not None, "Model manager not initialized"
+        if model_manager is None:
+            raise HTTPException(status_code=503, detail="Model manager not initialized")
         # Auto-unload if this model is currently active
         if engine.is_loaded and engine.model_name == filename.replace('.gguf', ''):
             engine.unload()
-            import time
-            time.sleep(1.0)  # Give OS time to release file handles
+            import asyncio
+            await asyncio.sleep(1.0)  # Give OS time to release file handles
 
         success = model_manager.delete_model(filename)
         if success:
@@ -292,8 +353,14 @@ async def download_model(req: DownloadModelRequest):
             download_state["message"] = message
 
     def _run_download():
+        if model_manager is None:
+            with download_lock:
+                download_state["done"] = True
+                download_state["error"] = "Model manager not initialized"
+                download_state["message"] = "Error: Model manager not initialized"
+                download_state["active"] = False
+            return
         try:
-            assert model_manager is not None, "Model manager not initialized"
             result = model_manager.download_model_stream(req.catalog_key, progress_callback=_progress_cb)
             with download_lock:
                 download_state["done"] = True
@@ -337,15 +404,45 @@ async def get_settings():
             masked[k] = v
     return masked
 
+@app.get("/api/providers")
+async def list_providers():
+    """List all available cloud AI providers and their configuration status."""
+    settings = _load_settings()
+    providers = [
+        {"id": "gemini",     "name": "Google Gemini",  "icon": "✦", "default_model": "gemini-2.0-flash",       "key_field": "gemini_key"},
+        {"id": "claude",     "name": "Anthropic Claude","icon": "◈", "default_model": "claude-sonnet-4-20250514","key_field": "claude_key"},
+        {"id": "openai",     "name": "OpenAI ChatGPT", "icon": "◉", "default_model": "gpt-4o",                 "key_field": "openai_key"},
+        {"id": "mistral",    "name": "Mistral AI",     "icon": "▣", "default_model": "mistral-large-latest",   "key_field": "mistral_key"},
+        {"id": "groq",       "name": "Groq",           "icon": "⚡","default_model": "llama-3.3-70b-versatile", "key_field": "groq_key"},
+        {"id": "cohere",     "name": "Cohere",         "icon": "◆", "default_model": "command-r-plus",         "key_field": "cohere_key"},
+        {"id": "perplexity", "name": "Perplexity",     "icon": "◎", "default_model": "sonar-pro",              "key_field": "perplexity_key"},
+        {"id": "deepseek",   "name": "DeepSeek",       "icon": "◇", "default_model": "deepseek-chat",          "key_field": "deepseek_key"},
+        {"id": "xai",        "name": "xAI Grok",       "icon": "✕", "default_model": "grok-3",                 "key_field": "xai_key"},
+        {"id": "together",   "name": "Together AI",    "icon": "⊕", "default_model": "Llama-3.3-70B-Instruct", "key_field": "together_key"},
+        {"id": "fireworks",  "name": "Fireworks AI",   "icon": "🔥","default_model": "llama-v3p3-70b-instruct","key_field": "fireworks_key"},
+        {"id": "openrouter", "name": "OpenRouter",     "icon": "⇄", "default_model": "openai/gpt-4o",          "key_field": "openrouter_key"},
+    ]
+    for p in providers:
+        p["configured"] = bool(settings.get(p["key_field"], ""))
+    return {"providers": providers}
+
+
 @app.post("/api/settings")
 async def save_settings(req: SettingsRequest):
     """Save API keys to local settings file."""
     settings = _load_settings()
-    if req.gemini_key is not None:
-        settings["gemini_key"] = req.gemini_key
-    if req.claude_key is not None:
-        settings["claude_key"] = req.claude_key
+    key_fields = [
+        "gemini_key", "claude_key", "openai_key", "mistral_key",
+        "groq_key", "cohere_key", "perplexity_key", "deepseek_key",
+        "xai_key", "together_key", "fireworks_key", "openrouter_key",
+    ]
+    for field in key_fields:
+        val = getattr(req, field, None)
+        if val is not None:
+            settings[field] = val
     _save_settings(settings)
+    # Background sync
+    sync_settings(settings)
     return {"status": "saved"}
 
 @app.post("/api/chat/cloud")
@@ -360,18 +457,79 @@ async def cloud_chat(req: CloudChatRequest):
             "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
             "key_field": "gemini_key",
             "default_model": "gemini-2.0-flash",
-            "format": "openai",  # Gemini supports OpenAI-compatible format
+            "format": "openai",
         },
         "claude": {
             "url": "https://api.anthropic.com/v1/messages",
             "key_field": "claude_key",
-            "default_model": "claude-3-5-sonnet-20241022",
-            "format": "anthropic",  # Claude uses its own format
+            "default_model": "claude-sonnet-4-20250514",
+            "format": "anthropic",
+        },
+        "openai": {
+            "url": "https://api.openai.com/v1/chat/completions",
+            "key_field": "openai_key",
+            "default_model": "gpt-4o",
+            "format": "openai",
+        },
+        "mistral": {
+            "url": "https://api.mistral.ai/v1/chat/completions",
+            "key_field": "mistral_key",
+            "default_model": "mistral-large-latest",
+            "format": "openai",
+        },
+        "groq": {
+            "url": "https://api.groq.com/openai/v1/chat/completions",
+            "key_field": "groq_key",
+            "default_model": "llama-3.3-70b-versatile",
+            "format": "openai",
+        },
+        "cohere": {
+            "url": "https://api.cohere.com/v2/chat",
+            "key_field": "cohere_key",
+            "default_model": "command-r-plus",
+            "format": "openai",
+        },
+        "perplexity": {
+            "url": "https://api.perplexity.ai/chat/completions",
+            "key_field": "perplexity_key",
+            "default_model": "sonar-pro",
+            "format": "openai",
+        },
+        "deepseek": {
+            "url": "https://api.deepseek.com/chat/completions",
+            "key_field": "deepseek_key",
+            "default_model": "deepseek-chat",
+            "format": "openai",
+        },
+        "xai": {
+            "url": "https://api.x.ai/v1/chat/completions",
+            "key_field": "xai_key",
+            "default_model": "grok-3",
+            "format": "openai",
+        },
+        "together": {
+            "url": "https://api.together.xyz/v1/chat/completions",
+            "key_field": "together_key",
+            "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            "format": "openai",
+        },
+        "fireworks": {
+            "url": "https://api.fireworks.ai/inference/v1/chat/completions",
+            "key_field": "fireworks_key",
+            "default_model": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+            "format": "openai",
+        },
+        "openrouter": {
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+            "key_field": "openrouter_key",
+            "default_model": "openai/gpt-4o",
+            "format": "openai",
         },
     }
     
     if req.provider not in provider_config:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}. Use 'gemini' or 'claude'.")
+        providers = ', '.join(provider_config.keys())
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}. Available: {providers}")
     
     pc = provider_config[req.provider]
     api_key = settings.get(pc["key_field"], "")
@@ -380,7 +538,8 @@ async def cloud_chat(req: CloudChatRequest):
     
     model = req.model or pc["default_model"]
 
-    assert chat_engine is not None, "Chat engine not initialized"
+    if chat_engine is None:
+        raise HTTPException(status_code=503, detail="Chat engine not initialized")
 
     # Persist cloud conversations
     if req.conversation_id:
@@ -510,7 +669,8 @@ async def chat_stream(req: Request, chat_req: ChatRequest):
     if not engine.is_loaded:
         raise HTTPException(status_code=400, detail="No model is currently loaded. Go to Model Manager.")
 
-    assert chat_engine is not None, "Chat engine not initialized"
+    if chat_engine is None:
+        raise HTTPException(status_code=503, detail="Chat engine not initialized")
     
     # Get or create conversation
     if chat_req.conversation_id:
@@ -651,19 +811,23 @@ async def get_knowledge_stats():
 
 @app.get("/api/conversations")
 async def list_conversations():
-    assert chat_engine is not None; return chat_engine.list_conversations()
+    if chat_engine is None:
+        raise HTTPException(status_code=503, detail="Chat engine not initialized")
+    return chat_engine.list_conversations()
 
 @app.get("/api/conversations/search")
 async def search_conversations(q: str = ""):
     """Search conversations by title or content."""
-    assert chat_engine is not None
+    if chat_engine is None:
+        raise HTTPException(status_code=503, detail="Chat engine not initialized")
     if not q.strip():
         return chat_engine.list_conversations()
     return chat_engine.search_conversations(q)
 
 @app.get("/api/conversations/{conv_id}")
 async def get_conversation(conv_id: str):
-    assert chat_engine is not None
+    if chat_engine is None:
+        raise HTTPException(status_code=503, detail="Chat engine not initialized")
     conv = chat_engine.get_conversation(conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Not found")
@@ -671,22 +835,26 @@ async def get_conversation(conv_id: str):
 
 @app.delete("/api/conversations/{conv_id}")
 async def delete_conversation(conv_id: str):
-    assert chat_engine is not None
+    if chat_engine is None:
+        raise HTTPException(status_code=503, detail="Chat engine not initialized")
     chat_engine.delete_conversation(conv_id)
     return {"status": "deleted"}
 
 @app.get("/api/conversations/{conv_id}/export")
 async def export_conversation(conv_id: str):
     """Export a conversation as a markdown file."""
-    assert chat_engine is not None
+    if chat_engine is None:
+        raise HTTPException(status_code=503, detail="Chat engine not initialized")
     conv = chat_engine.get_conversation(conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     md = conv.export_markdown()
+    import re as _re
+    safe_title = _re.sub(r'[^\w\s-]', '', conv.title[:50]).strip() or "conversation"
     return StreamingResponse(
         iter([md]),
         media_type="text/markdown",
-        headers={"Content-Disposition": f'attachment; filename="{conv.title[:50]}.md"'},
+        headers={"Content-Disposition": f'attachment; filename="{safe_title}.md"'},
     )
 
 
@@ -700,7 +868,7 @@ def _dir_size(p: Path) -> int:
     for f in p.rglob("*"):
         if f.is_file():
             try:
-                total += f.stat().st_size
+                total += f.stat().st_size  # pyre-ignore[16]
             except OSError:
                 pass
     return total
@@ -841,7 +1009,8 @@ if _ui_dir:
     # Serve index.html at root
     @app.get("/", response_class=HTMLResponse)
     async def serve_ui_root():
-        assert _ui_dir is not None
+        if _ui_dir is None:
+            raise HTTPException(status_code=500, detail="UI directory not found")
         return FileResponse(str(_ui_dir / "index.html"))
     
     # Serve other static files (favicon, etc.)

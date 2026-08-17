@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "personal-llm"
+version = "2.0.2"
+description = "Fully offline, private AI assistant. Runs open-source LLMs on your hardware."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Prabh"}]
+keywords = ["llm", "ai", "privacy", "offline", "gguf", "llama-cpp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "llama-cpp-python>=0.3.0",
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+    "python-multipart>=0.0.22",
+    "pydantic>=2.0",
+    "requests>=2.28.0",
+    "httpx>=0.24.0",
+    "huggingface-hub>=0.20.0",
+]
+
+[project.optional-dependencies]
+rag = [
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+    "PyPDF2>=3.0.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.2",
+    "python-pptx>=0.6.23",
+]
+ui = ["gradio>=4.0.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.4.0",
+    "httpx>=0.24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/UCHIHA-MADRA/LLM_Personal"
+Repository = "https://github.com/UCHIHA-MADRA/LLM_Personal"
+Issues = "https://github.com/UCHIHA-MADRA/LLM_Personal/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

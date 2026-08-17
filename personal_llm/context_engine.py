@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Context Intelligence Engine — Research-backed techniques to make small LLMs smarter.
 

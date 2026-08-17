@@ -1,0 +1,27 @@
+{
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Windows",
+  "pythonPath": "C:\\Users\\prabh\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none",
+  "reportOptionalMemberAccess": "warning",
+  "reportGeneralTypeIssues": "warning",
+  "extraPaths": [
+    ".",
+    "C:\\Users\\prabh\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist-electron2",
+    "build",
+    ".git",
+    "**/__pycache__",
+    "tests",
+    "website",
+    "mobile"
+  ],
+  "ignore": [
+    "personal_llm/web_ui.py"
+  ]
+}
